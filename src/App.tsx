@@ -7,7 +7,7 @@ import { HomeScreen } from './components/HomeScreen'
 import { GuideOverlay, PriceAtlas } from './components/Overlays'
 import { RouteMap } from './components/RouteMap'
 import { BUFFS, PRICE_SNAPSHOT, STARTER_MODEL_IDS, getModel } from './game/data'
-import { audioDirector, type SoundCue } from './game/audio'
+import { audioDirector } from './game/audio'
 import {
   DEFAULT_META,
   attemptDelivery,
@@ -36,15 +36,6 @@ const DEFAULT_SETTINGS: Settings = {
 }
 
 type Overlay = 'atlas' | 'guide' | null
-type FeedbackTone = 'model' | 'action' | 'success' | 'warning'
-
-const FEEDBACK_LABEL: Record<FeedbackTone, string> = {
-  model: 'BACKEND HOT-SWAPPED',
-  action: 'TOKEN BURN',
-  success: 'CLEAN RUN',
-  warning: 'RISK DETECTED',
-}
-
 export default function App() {
   const [meta, setMeta] = useState<MetaProgress>(() => readStorage(STORAGE_META, DEFAULT_META))
   const [settings, setSettings] = useState<Settings>(() => readStorage(STORAGE_SETTINGS, DEFAULT_SETTINGS))
@@ -52,10 +43,7 @@ export default function App() {
   const [run, setRun] = useState<RunState | null>(null)
   const [selectedStartModel, setSelectedStartModel] = useState(() => localStorage.getItem(STORAGE_MODEL) ?? STARTER_MODEL_IDS[0])
   const [overlay, setOverlay] = useState<Overlay>(null)
-  const [feedback, setFeedback] = useState<{ id: number; tone: FeedbackTone } | null>(null)
   const recordedRuns = useRef(new Set<string>())
-  const feedbackTimer = useRef<number | null>(null)
-  const gameRoot = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
@@ -67,10 +55,6 @@ export default function App() {
   useEffect(() => {
     audioDirector.setEnabled(settings.sound)
   }, [settings.sound])
-
-  useEffect(() => () => {
-    if (feedbackTimer.current !== null) window.clearTimeout(feedbackTimer.current)
-  }, [])
 
   useEffect(() => {
     if (!run) return
@@ -104,7 +88,7 @@ export default function App() {
     }
     setRun(next)
     setSavedRun(next)
-    emitFeedback('success', 'start')
+    audioDirector.play('start')
   }
 
   const retryRun = () => {
@@ -114,6 +98,7 @@ export default function App() {
       availableModelIds: [...new Set([...STARTER_MODEL_IDS, ...meta.unlockedModels, run.selectedModelId])],
     }
     setRun(next)
+    audioDirector.play('start')
   }
 
   const returnHome = () => {
@@ -143,28 +128,10 @@ export default function App() {
     audioDirector.play('ui')
   }
 
-  const emitFeedback = (tone: FeedbackTone, cue: SoundCue) => {
-    audioDirector.play(cue)
-    if (settings.reducedMotion) return
-    if (feedbackTimer.current !== null) window.clearTimeout(feedbackTimer.current)
-    const next = { id: Date.now(), tone }
-    setFeedback(next)
-    feedbackTimer.current = window.setTimeout(() => setFeedback((current) => current?.id === next.id ? null : current), 680)
-
-    const selector = tone === 'model' ? '.agent-avatar, .side-model-title > span' : tone === 'warning' ? '.ide-workspace' : '.agent-pane, .route-map'
-    const targets = gameRoot.current?.querySelectorAll<HTMLElement>(selector)
-    const frames = tone === 'warning'
-      ? [{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(-2px)' }, { transform: 'translateX(0)' }]
-      : tone === 'model'
-        ? [{ transform: 'scale(.82) rotate(-7deg)' }, { transform: 'scale(1.12) rotate(4deg)' }, { transform: 'scale(1) rotate(0)' }]
-        : [{ transform: 'translateY(0)' }, { transform: 'translateY(2px)' }, { transform: 'translateY(0)' }]
-    targets?.forEach((target) => target.animate(frames, { duration: tone === 'warning' ? 300 : 260, easing: 'cubic-bezier(.2,.9,.25,1)' }))
-  }
-
   const selectNode = (id: string) => {
     if (!run) return
     setRun(beginNode(run, id))
-    emitFeedback('action', 'ui')
+    audioDirector.play('ui')
   }
 
   const performAction = (card: ActionCard) => {
@@ -172,7 +139,7 @@ export default function App() {
     const next = playAction(run, card)
     setRun(next)
     const latest = next.logs.at(-1)
-    emitFeedback(latest?.role === 'warning' ? 'warning' : 'action', latest?.role === 'warning' ? 'warning' : 'action')
+    audioDirector.play(latest?.role === 'warning' ? 'warning' : 'action')
   }
 
   const deliverProject = () => {
@@ -180,31 +147,31 @@ export default function App() {
     const next = attemptDelivery(run)
     setRun(next)
     const passed = next.screen === 'reward' || next.lastOutcome === 'victory'
-    emitFeedback(passed ? 'success' : 'warning', passed ? 'success' : 'warning')
+    audioDirector.play(passed ? 'success' : 'warning')
   }
 
   const changeModel = (id: string) => {
     if (!run || id === run.selectedModelId) return
     setRun(switchModel(run, id))
-    emitFeedback('model', 'model')
+    audioDirector.play('model')
   }
 
   const settleEvent = (effect: ChoiceEffect, result: string) => {
     if (!run) return
     setRun(resolveEvent(run, effect, result))
-    emitFeedback('action', 'ui')
+    audioDirector.play('ui')
   }
 
   const settleCache = (choice: 'compact' | 'stabilize' | 'deadline') => {
     if (!run) return
     setRun(resolveCache(run, choice))
-    emitFeedback('success', 'success')
+    audioDirector.play('success')
   }
 
   const takeReward = (reward: { type: 'model' | 'buff'; id: string }) => {
     if (!run) return
     setRun(chooseReward(run, reward))
-    emitFeedback(reward.type === 'model' ? 'model' : 'success', 'reward')
+    audioDirector.play('reward')
   }
 
   if (!run) {
@@ -232,8 +199,7 @@ export default function App() {
   }
 
   return (
-    <div ref={gameRoot} className={`app-root game-root shell-${settings.shell}`}>
-      {feedback && <div key={feedback.id} className={`screen-feedback ${feedback.tone}`} aria-hidden="true"><span>{FEEDBACK_LABEL[feedback.tone]}</span></div>}
+    <div className={`app-root game-root shell-${settings.shell}`}>
       <header className="game-topbar">
         <div className="topbar-left">
           <BrandMark compact />

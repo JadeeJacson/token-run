@@ -313,14 +313,10 @@ a { color: inherit; }
 .choice-card:active, .reward-card:active { transform: translateY(1px) scale(.985); }
 .agent-message:last-child { animation: message-enter 280ms ease-out; }
 
-.screen-feedback { position: fixed; z-index: 80; inset: 62px 0 0; pointer-events: none; overflow: hidden; display: grid; place-items: start center; animation: feedback-fade 680ms ease-out both; }
-.screen-feedback::before { content: ""; position: absolute; inset: 0; opacity: .28; background: radial-gradient(circle at 78% 58%, var(--feedback-color) 0, transparent 34%); animation: feedback-wave 620ms cubic-bezier(.15,.75,.2,1) both; }
-.screen-feedback::after { content: ""; position: absolute; inset: 0; border: 1px solid color-mix(in srgb, var(--feedback-color) 60%, transparent); box-shadow: inset 0 0 70px color-mix(in srgb, var(--feedback-color) 16%, transparent); animation: feedback-frame 620ms ease-out both; }
-.screen-feedback span { margin-top: 18px; padding: 7px 12px; color: var(--feedback-color); border: 1px solid color-mix(in srgb, var(--feedback-color) 40%, var(--border)); background: color-mix(in srgb, var(--panel-solid) 90%, transparent); border-radius: 99px; box-shadow: 0 8px 24px rgba(0,0,0,.18); font: 700 10px/1 "IBM Plex Mono", monospace; letter-spacing: .13em; animation: feedback-label 520ms cubic-bezier(.18,.9,.25,1) both; }
-.screen-feedback.model { --feedback-color: var(--violet); }
-.screen-feedback.action { --feedback-color: var(--ember); }
-.screen-feedback.success { --feedback-color: var(--green); }
-.screen-feedback.warning { --feedback-color: var(--red); }
+.action-card.is-fired { animation: card-fire 380ms cubic-bezier(.18,.9,.25,1.1); border-color: color-mix(in srgb, var(--card-color) 75%, var(--border)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--card-color) 17%, transparent), 0 8px 22px color-mix(in srgb, var(--card-color) 14%, transparent); }
+.action-card.is-fired::after { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--card-color) 20%, transparent) 48%, transparent 70%); transform: translateX(-120%); animation: card-sheen 360ms ease-out both; }
+.action-card.is-fired > * { position: relative; z-index: 2; }
+.agent-message.warning:last-child { animation: warning-message 380ms cubic-bezier(.18,.9,.25,1.1); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 50% { opacity: 0; } }
@@ -335,10 +331,9 @@ a { color: inherit; }
 @keyframes model-hot-swap { 0% { transform: scale(.72) rotate(-8deg); filter: brightness(1.7); } 55% { transform: scale(1.16) rotate(4deg); } 100% { transform: none; filter: none; } }
 @keyframes card-impact { 0% { transform: translateY(-2px) scale(1); } 38% { transform: translateY(2px) scale(.965) rotate(-.45deg); filter: brightness(1.35); } 100% { transform: none; filter: none; } }
 @keyframes message-enter { from { opacity: 0; transform: translateY(8px); border-color: var(--accent); } }
-@keyframes feedback-fade { 0%, 58% { opacity: 1; } 100% { opacity: 0; } }
-@keyframes feedback-wave { from { transform: scale(.24); opacity: .48; } to { transform: scale(1.35); opacity: 0; } }
-@keyframes feedback-frame { 0% { opacity: .75; } 100% { opacity: 0; } }
-@keyframes feedback-label { 0% { opacity: 0; transform: translateY(-12px) scale(.88); } 35% { opacity: 1; transform: translateY(0) scale(1.04); } 100% { opacity: 0; transform: translateY(2px) scale(1); } }
+@keyframes card-fire { 0% { transform: translateY(-2px) scale(1); } 34% { transform: translateY(2px) scale(.965) rotate(-.45deg); filter: brightness(1.25); } 68% { transform: translateY(-1px) scale(1.008) rotate(.18deg); } 100% { transform: none; filter: none; } }
+@keyframes card-sheen { to { transform: translateX(120%); } }
+@keyframes warning-message { 0% { transform: translateX(0); } 28% { transform: translateX(-4px); } 52% { transform: translateX(3px); } 76% { transform: translateX(-1px); } 100% { transform: translateX(0); } }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
 
 @media (max-width: 1280px) {

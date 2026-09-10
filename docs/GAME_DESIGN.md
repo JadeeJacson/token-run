@@ -97,7 +97,8 @@ Agent 外壳与后端模型分离。Codax 和 Cloude 决定界面措辞与视觉
 - Codax 采用绿色强调色，Cloude 采用暖橙色强调色。
 - 浅色与深色主题拥有独立变量，不是简单颜色反转。
 - 声音使用离线可用的 Web Audio 合成：低音量终端氛围循环，以及点击、模型切换、Token 消耗、成功、风险和奖励提示音。
-- 动效用于表达操作结果而非纯装饰：模型热切换、卡牌下压、消息入场、成功闪光与风险震屏；玩家可以随时精简动态效果。
+- 动效用于表达操作结果而非纯装饰：模型热切换、卡牌下压扫光、消息入场、局部风险提示；玩家可以随时精简动态效果。
+- 手感参考了 [Browslatro 的分段计分动画](https://github.com/oreoshake-s-team/browslatro/blob/main/docs/onboarding/animations.md)：把结果拆成可见的局部步骤；参考 [Open Poker 的音频/渲染分层](https://github.com/alexis-labs/open-poker) 与 [Slay the Web 的 Web 卡牌路线](https://github.com/oskarrough/slaytheweb)，避免把每次点击都处理成全屏特效。
 - 首发面向桌面浏览器，1280px 以上获得完整布局；主页可响应到手机尺寸，实际对局保持 1024px 最小工作区。
 
 ## 10. 首版完成标准

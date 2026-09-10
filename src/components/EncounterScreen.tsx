@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { AlertTriangle, Bot, Box, Check, ChevronDown, CircleDot, Code2, Cpu, Database, FileCode2, FileJson, FileText, Folder, GitCompareArrows, RotateCcw, Search, Send, ShieldCheck, Sparkles, Terminal, TestTube2, Wrench } from 'lucide-react'
 import { ACTION_CARDS, getModel, getProject } from '../game/data'
@@ -38,6 +39,13 @@ export function EncounterScreen({
   onView: (mode: 'source' | 'diff' | 'terminal') => void
   onOpenAtlas: () => void
 }) {
+  const [firedCardId, setFiredCardId] = useState<string | null>(null)
+  const firedTimer = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (firedTimer.current !== null) window.clearTimeout(firedTimer.current)
+  }, [])
+
   if (!state.encounter) return null
   const encounter = state.encounter
   const project = getProject(encounter.projectId)
@@ -45,6 +53,13 @@ export function EncounterScreen({
   const confidence = deliveryConfidence(state)
   const hand = buildHand(state)
   const hasCode = encounter.code > 0
+
+  const fireCard = (card: ActionCard) => {
+    setFiredCardId(card.id)
+    if (firedTimer.current !== null) window.clearTimeout(firedTimer.current)
+    firedTimer.current = window.setTimeout(() => setFiredCardId((current) => current === card.id ? null : current), 380)
+    onAction(card)
+  }
 
   return (
     <div className="ide-workspace">
@@ -151,10 +166,10 @@ export function EncounterScreen({
               return (
                 <button
                   type="button"
-                  className={`action-card kind-${card.kind} risk-${card.risk} ${cooldown ? 'cooling' : ''}`}
+                  className={`action-card kind-${card.kind} risk-${card.risk} ${cooldown ? 'cooling' : ''} ${firedCardId === card.id ? 'is-fired' : ''}`}
                   key={card.id}
                   disabled={Boolean(cooldown) || resourceBlocked}
-                  onClick={() => onAction(card)}
+                  onClick={() => fireCard(card)}
                 >
                   <div className="card-top"><span className="card-kind"><Icon size={13} />{kindName(card.kind)}</span><span className="risk-dot">风险 {card.risk}</span></div>
                   <strong>{card.name}</strong>
