@@ -17,6 +17,8 @@ export function HomeScreen({
   onOpenGuide,
   onTheme,
   onShell,
+  onSound,
+  onMotion,
 }: {
   meta: MetaProgress
   settings: Settings
@@ -29,6 +31,8 @@ export function HomeScreen({
   onOpenGuide: () => void
   onTheme: () => void
   onShell: () => void
+  onSound: () => void
+  onMotion: () => void
 }) {
   const currentModel = getModel(selectedModel)
   const nextUnlock = nextPermanentUnlock(meta)
@@ -42,7 +46,7 @@ export function HomeScreen({
         <div className="home-nav-right">
           <button className="nav-text-button" onClick={onOpenGuide}><BookOpen size={15} />怎么玩</button>
           <button className="nav-text-button" onClick={onOpenAtlas}><Github size={15} />价格图鉴</button>
-          <ThemeShellControls theme={settings.theme} shell={settings.shell} onTheme={onTheme} onShell={onShell} />
+          <ThemeShellControls theme={settings.theme} shell={settings.shell} sound={settings.sound} reducedMotion={settings.reducedMotion} onTheme={onTheme} onShell={onShell} onSound={onSound} onMotion={onMotion} />
         </div>
       </header>
 

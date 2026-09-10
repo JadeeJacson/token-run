@@ -118,7 +118,7 @@ export function EncounterScreen({
 
       <aside className="agent-pane">
         <div className="agent-header">
-          <div className="agent-avatar" style={{ '--model-color': model.color } as CSSProperties}><Bot size={17} /></div>
+          <div key={model.id} className="agent-avatar model-swap" style={{ '--model-color': model.color } as CSSProperties}><Bot size={17} /></div>
           <div><span>当前后端</span><strong>{model.parodyName}</strong></div>
           <select value={state.selectedModelId} onChange={(event) => onSwitchModel(event.target.value)} aria-label="切换模型">
             {state.availableModelIds.map((id) => <option value={id} key={id}>{getModel(id).parodyName}</option>)}

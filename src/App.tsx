@@ -7,6 +7,7 @@ import { HomeScreen } from './components/HomeScreen'
 import { GuideOverlay, PriceAtlas } from './components/Overlays'
 import { RouteMap } from './components/RouteMap'
 import { BUFFS, PRICE_SNAPSHOT, STARTER_MODEL_IDS, getModel } from './game/data'
+import { audioDirector, type SoundCue } from './game/audio'
 import {
   DEFAULT_META,
   attemptDelivery,
@@ -35,6 +36,14 @@ const DEFAULT_SETTINGS: Settings = {
 }
 
 type Overlay = 'atlas' | 'guide' | null
+type FeedbackTone = 'model' | 'action' | 'success' | 'warning'
+
+const FEEDBACK_LABEL: Record<FeedbackTone, string> = {
+  model: 'BACKEND HOT-SWAPPED',
+  action: 'TOKEN BURN',
+  success: 'CLEAN RUN',
+  warning: 'RISK DETECTED',
+}
 
 export default function App() {
   const [meta, setMeta] = useState<MetaProgress>(() => readStorage(STORAGE_META, DEFAULT_META))
@@ -43,7 +52,10 @@ export default function App() {
   const [run, setRun] = useState<RunState | null>(null)
   const [selectedStartModel, setSelectedStartModel] = useState(() => localStorage.getItem(STORAGE_MODEL) ?? STARTER_MODEL_IDS[0])
   const [overlay, setOverlay] = useState<Overlay>(null)
+  const [feedback, setFeedback] = useState<{ id: number; tone: FeedbackTone } | null>(null)
   const recordedRuns = useRef(new Set<string>())
+  const feedbackTimer = useRef<number | null>(null)
+  const gameRoot = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
@@ -51,6 +63,14 @@ export default function App() {
     document.documentElement.classList.toggle('reduce-motion', settings.reducedMotion)
     localStorage.setItem(STORAGE_SETTINGS, JSON.stringify(settings))
   }, [settings])
+
+  useEffect(() => {
+    audioDirector.setEnabled(settings.sound)
+  }, [settings.sound])
+
+  useEffect(() => () => {
+    if (feedbackTimer.current !== null) window.clearTimeout(feedbackTimer.current)
+  }, [])
 
   useEffect(() => {
     if (!run) return
@@ -84,6 +104,7 @@ export default function App() {
     }
     setRun(next)
     setSavedRun(next)
+    emitFeedback('success', 'start')
   }
 
   const retryRun = () => {
@@ -106,10 +127,85 @@ export default function App() {
   const chooseStartModel = (id: string) => {
     setSelectedStartModel(id)
     localStorage.setItem(STORAGE_MODEL, id)
+    audioDirector.play('model')
   }
 
   const toggleTheme = () => setSettings((current) => ({ ...current, theme: current.theme === 'dark' ? 'light' : 'dark' }))
   const toggleShell = () => setSettings((current) => ({ ...current, shell: current.shell === 'codax' ? 'cloude' : 'codax' }))
+  const toggleSound = () => {
+    const next = !settings.sound
+    audioDirector.setEnabled(next)
+    setSettings((current) => ({ ...current, sound: next }))
+    if (next) window.setTimeout(() => audioDirector.play('success'), 70)
+  }
+  const toggleMotion = () => {
+    setSettings((current) => ({ ...current, reducedMotion: !current.reducedMotion }))
+    audioDirector.play('ui')
+  }
+
+  const emitFeedback = (tone: FeedbackTone, cue: SoundCue) => {
+    audioDirector.play(cue)
+    if (settings.reducedMotion) return
+    if (feedbackTimer.current !== null) window.clearTimeout(feedbackTimer.current)
+    const next = { id: Date.now(), tone }
+    setFeedback(next)
+    feedbackTimer.current = window.setTimeout(() => setFeedback((current) => current?.id === next.id ? null : current), 680)
+
+    const selector = tone === 'model' ? '.agent-avatar, .side-model-title > span' : tone === 'warning' ? '.ide-workspace' : '.agent-pane, .route-map'
+    const targets = gameRoot.current?.querySelectorAll<HTMLElement>(selector)
+    const frames = tone === 'warning'
+      ? [{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(-2px)' }, { transform: 'translateX(0)' }]
+      : tone === 'model'
+        ? [{ transform: 'scale(.82) rotate(-7deg)' }, { transform: 'scale(1.12) rotate(4deg)' }, { transform: 'scale(1) rotate(0)' }]
+        : [{ transform: 'translateY(0)' }, { transform: 'translateY(2px)' }, { transform: 'translateY(0)' }]
+    targets?.forEach((target) => target.animate(frames, { duration: tone === 'warning' ? 300 : 260, easing: 'cubic-bezier(.2,.9,.25,1)' }))
+  }
+
+  const selectNode = (id: string) => {
+    if (!run) return
+    setRun(beginNode(run, id))
+    emitFeedback('action', 'ui')
+  }
+
+  const performAction = (card: ActionCard) => {
+    if (!run) return
+    const next = playAction(run, card)
+    setRun(next)
+    const latest = next.logs.at(-1)
+    emitFeedback(latest?.role === 'warning' ? 'warning' : 'action', latest?.role === 'warning' ? 'warning' : 'action')
+  }
+
+  const deliverProject = () => {
+    if (!run) return
+    const next = attemptDelivery(run)
+    setRun(next)
+    const passed = next.screen === 'reward' || next.lastOutcome === 'victory'
+    emitFeedback(passed ? 'success' : 'warning', passed ? 'success' : 'warning')
+  }
+
+  const changeModel = (id: string) => {
+    if (!run || id === run.selectedModelId) return
+    setRun(switchModel(run, id))
+    emitFeedback('model', 'model')
+  }
+
+  const settleEvent = (effect: ChoiceEffect, result: string) => {
+    if (!run) return
+    setRun(resolveEvent(run, effect, result))
+    emitFeedback('action', 'ui')
+  }
+
+  const settleCache = (choice: 'compact' | 'stabilize' | 'deadline') => {
+    if (!run) return
+    setRun(resolveCache(run, choice))
+    emitFeedback('success', 'success')
+  }
+
+  const takeReward = (reward: { type: 'model' | 'buff'; id: string }) => {
+    if (!run) return
+    setRun(chooseReward(run, reward))
+    emitFeedback(reward.type === 'model' ? 'model' : 'success', 'reward')
+  }
 
   if (!run) {
     return (
@@ -126,6 +222,8 @@ export default function App() {
           onOpenGuide={() => setOverlay('guide')}
           onTheme={toggleTheme}
           onShell={toggleShell}
+          onSound={toggleSound}
+          onMotion={toggleMotion}
         />
         {overlay === 'atlas' && <PriceAtlas onClose={() => setOverlay(null)} />}
         {overlay === 'guide' && <GuideOverlay onClose={() => setOverlay(null)} />}
@@ -134,7 +232,8 @@ export default function App() {
   }
 
   return (
-    <div className={`app-root game-root shell-${settings.shell}`}>
+    <div ref={gameRoot} className={`app-root game-root shell-${settings.shell}`}>
+      {feedback && <div key={feedback.id} className={`screen-feedback ${feedback.tone}`} aria-hidden="true"><span>{FEEDBACK_LABEL[feedback.tone]}</span></div>}
       <header className="game-topbar">
         <div className="topbar-left">
           <BrandMark compact />
@@ -146,21 +245,21 @@ export default function App() {
         <div className="topbar-actions">
           <button className="icon-button text-icon-button" onClick={() => setOverlay('guide')}><BookOpen size={15} /><span>规则</span></button>
           <button className="icon-button text-icon-button" onClick={() => setOverlay('atlas')}><CircleDollarSign size={15} /><span>价格</span></button>
-          <ThemeShellControls theme={settings.theme} shell={settings.shell} onTheme={toggleTheme} onShell={toggleShell} />
+          <ThemeShellControls compact theme={settings.theme} shell={settings.shell} sound={settings.sound} reducedMotion={settings.reducedMotion} onTheme={toggleTheme} onShell={toggleShell} onSound={toggleSound} onMotion={toggleMotion} />
           <button className="icon-button" onClick={returnHome} title="返回主界面"><Home size={16} /></button>
         </div>
       </header>
 
       <div className="game-body">
         {run.screen === 'map' && (
-          <MapWorkspace state={run} onSelect={(id) => setRun((current) => current ? beginNode(current, id) : current)} onSwitchModel={(id) => setRun((current) => current ? switchModel(current, id) : current)} />
+          <MapWorkspace state={run} onSelect={selectNode} onSwitchModel={changeModel} />
         )}
         {run.screen === 'encounter' && (
           <EncounterScreen
             state={run}
-            onAction={(card: ActionCard) => setRun((current) => current ? playAction(current, card) : current)}
-            onDeliver={() => setRun((current) => current ? attemptDelivery(current) : current)}
-            onSwitchModel={(id) => setRun((current) => current ? switchModel(current, id) : current)}
+            onAction={performAction}
+            onDeliver={deliverProject}
+            onSwitchModel={changeModel}
             onView={(mode) => setRun((current) => current ? setEncounterView(current, mode) : current)}
             onOpenAtlas={() => setOverlay('atlas')}
           />
@@ -168,11 +267,11 @@ export default function App() {
         {run.screen === 'event' && (
           <EventScreen
             state={run}
-            onEventChoice={(effect: ChoiceEffect, result: string) => setRun((current) => current ? resolveEvent(current, effect, result) : current)}
-            onCacheChoice={(choice) => setRun((current) => current ? resolveCache(current, choice) : current)}
+            onEventChoice={settleEvent}
+            onCacheChoice={settleCache}
           />
         )}
-        {run.screen === 'reward' && <RewardScreen state={run} onChoose={(reward) => setRun((current) => current ? chooseReward(current, reward) : current)} />}
+        {run.screen === 'reward' && <RewardScreen state={run} onChoose={takeReward} />}
         {run.screen === 'summary' && <SummaryScreen state={run} meta={meta} onRetry={retryRun} onNewRun={startNewRun} onHome={returnHome} />}
       </div>
       {overlay === 'atlas' && <PriceAtlas onClose={() => setOverlay(null)} />}
@@ -190,7 +289,7 @@ function MapWorkspace({ state, onSelect, onSwitchModel }: { state: RunState; onS
       <aside className="run-sidebar">
         <section className="run-side-card agent-status-card">
           <span className="eyebrow">ACTIVE BACKEND</span>
-          <div className="side-model-title"><span style={{ background: model.color }}><Bot size={18} /></span><div><h3>{model.parodyName}</h3><p>{model.provider} · {model.realName}</p></div></div>
+          <div className="side-model-title"><span key={model.id} className="model-swap" style={{ background: model.color }}><Bot size={18} /></span><div><h3>{model.parodyName}</h3><p>{model.provider} · {model.realName}</p></div></div>
           <div className="side-model-bars"><StatBar label="能力" value={model.power / 1.45} /><StatBar label="可靠" value={model.reliability} /><StatBar label="速度" value={model.speed / 1.4} /></div>
           <label className="model-select-label">切换已接入模型<select value={state.selectedModelId} onChange={(event) => onSwitchModel(event.target.value)}>{state.availableModelIds.map((id) => <option key={id} value={id}>{getModel(id).parodyName}</option>)}</select></label>
         </section>

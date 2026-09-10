@@ -40,6 +40,8 @@ npm run play
 - 9 个现实模型价格映射、6 种运行时 Buff。
 - Codax Workbench 与 Cloude Code Terminal 两种 Agent 外壳。
 - 完整浅色、深色主题。
+- 可选程序化背景音乐与七类操作音效；完全由 Web Audio 实时生成，不依赖外部音频文件。
+- 模型热切换、卡牌执行、成功、风险等反馈动效，并提供“精简动态效果”开关。
 
 ## 价格口径
 

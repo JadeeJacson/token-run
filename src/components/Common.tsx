@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Activity, Clock3, Database, Flame, Moon, Sun, TerminalSquare, X } from 'lucide-react'
+import { Activity, Clock3, Database, Flame, Moon, Sparkles, Sun, TerminalSquare, Volume2, VolumeX, X } from 'lucide-react'
 import { formatCny, formatTokens } from '../game/engine'
 import type { RunResources, ShellStyle, Theme } from '../game/types'
 
@@ -40,19 +40,37 @@ export function ResourceBar({ resources }: { resources: RunResources }) {
 export function ThemeShellControls({
   theme,
   shell,
+  sound,
+  reducedMotion,
   onTheme,
   onShell,
+  onSound,
+  onMotion,
+  compact = false,
 }: {
   theme: Theme
   shell: ShellStyle
+  sound: boolean
+  reducedMotion: boolean
   onTheme: () => void
   onShell: () => void
+  onSound: () => void
+  onMotion: () => void
+  compact?: boolean
 }) {
   return (
-    <div className="shell-controls">
+    <div className={`shell-controls ${compact ? 'compact' : ''}`}>
       <button className="icon-button text-icon-button" onClick={onShell} title="切换 Agent 外壳">
         <TerminalSquare size={15} />
         <span>{shell === 'codax' ? 'Codax' : 'Cloude'}</span>
+      </button>
+      <button className={`icon-button sound-toggle ${sound ? 'active' : ''}`} onClick={onSound} title={sound ? '关闭背景音乐与音效' : '开启背景音乐与音效'} aria-label={sound ? '关闭声音' : '开启声音'} aria-pressed={sound}>
+        {sound ? <Volume2 size={16} /> : <VolumeX size={16} />}
+        {!compact && <span>{sound ? '声音开' : '声音关'}</span>}
+        {sound && <i className="sound-bars" aria-hidden="true"><b /><b /><b /></i>}
+      </button>
+      <button className={`icon-button motion-toggle ${reducedMotion ? '' : 'active'}`} onClick={onMotion} title={reducedMotion ? '开启完整动效' : '精简动态效果'} aria-label={reducedMotion ? '开启完整动效' : '精简动态效果'} aria-pressed={!reducedMotion}>
+        <Sparkles size={15} />
       </button>
       <button className="icon-button" onClick={onTheme} title="切换浅色/深色">
         {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
