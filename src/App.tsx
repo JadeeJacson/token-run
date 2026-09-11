@@ -14,6 +14,7 @@ import {
   beginNode,
   chooseReward,
   createRun,
+  normalizeRun,
   playAction,
   resolveCache,
   resolveEvent,
@@ -39,7 +40,10 @@ type Overlay = 'atlas' | 'guide' | null
 export default function App() {
   const [meta, setMeta] = useState<MetaProgress>(() => readStorage(STORAGE_META, DEFAULT_META))
   const [settings, setSettings] = useState<Settings>(() => readStorage(STORAGE_SETTINGS, DEFAULT_SETTINGS))
-  const [savedRun, setSavedRun] = useState<RunState | null>(() => readStorage(STORAGE_RUN, null))
+  const [savedRun, setSavedRun] = useState<RunState | null>(() => {
+    const stored = readStorage<RunState | null>(STORAGE_RUN, null)
+    return stored ? normalizeRun(stored) : null
+  })
   const [run, setRun] = useState<RunState | null>(null)
   const [selectedStartModel, setSelectedStartModel] = useState(() => localStorage.getItem(STORAGE_MODEL) ?? STARTER_MODEL_IDS[0])
   const [overlay, setOverlay] = useState<Overlay>(null)
@@ -255,8 +259,8 @@ function MapWorkspace({ state, onSelect, onSwitchModel }: { state: RunState; onS
       <aside className="run-sidebar">
         <section className="run-side-card agent-status-card">
           <span className="eyebrow">ACTIVE BACKEND</span>
-          <div className="side-model-title"><span key={model.id} className="model-swap" style={{ background: model.color }}><Bot size={18} /></span><div><h3>{model.parodyName}</h3><p>{model.provider} · {model.realName}</p></div></div>
-          <div className="side-model-bars"><StatBar label="能力" value={model.power / 1.45} /><StatBar label="可靠" value={model.reliability} /><StatBar label="速度" value={model.speed / 1.4} /></div>
+          <div className="side-model-title"><span key={model.id} className="model-swap" style={{ background: model.color }}><Bot size={18} /></span><div><h3>{model.parodyName}</h3><p>{model.provider} · {model.realName}</p><small className="model-trait">{model.trait}</small></div></div>
+          <div className="side-model-bars"><StatBar label="能力" value={model.power / 1.45} /><StatBar label="可靠" value={model.reliability} /><StatBar label="流程" value={model.workflowDiscipline / 1.1} /><StatBar label="省上下文" value={Math.min(1, Math.max(0, (1.3 - model.contextEfficiency) / 0.8))} /></div>
           <label className="model-select-label">切换已接入模型<select value={state.selectedModelId} onChange={(event) => onSwitchModel(event.target.value)}>{state.availableModelIds.map((id) => <option key={id} value={id}>{getModel(id).parodyName}</option>)}</select></label>
         </section>
 

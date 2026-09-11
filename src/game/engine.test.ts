@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ACTION_CARDS, MODELS } from './data'
 import {
+  assessCardSequence,
   DEFAULT_META,
   beginNode,
   buildRoute,
@@ -56,6 +57,7 @@ describe('run engine', () => {
     expect(totals.input).toBeGreaterThan(0)
     expect(totals.output).toBeGreaterThan(0)
     expect(totals.cost).toBeGreaterThan(0)
+    expect(totals.input + totals.output).toBeGreaterThan(1_000_000)
   })
 
   it('compresses context and enforces action cooldowns', () => {
@@ -87,6 +89,21 @@ describe('run engine', () => {
     expect(deliveryConfidence(prepared).value).toBeGreaterThan(low)
   })
 
+  it('penalizes implementation before investigation and rewards a clean sequence', () => {
+    const base = beginNode(createRun(707, 'codax-luna'), 'l0-a')
+    const patch = ACTION_CARDS.find((item) => item.id === 'precision-patch')!
+    const scan = ACTION_CARDS.find((item) => item.id === 'scan-repo')!
+    const wrong = playAction(base, patch)
+    const clean = playAction(playAction(base, scan), patch)
+
+    expect(assessCardSequence(base.encounter!, patch).ready).toBe(false)
+    expect(wrong.encounter?.workflowDebt).toBeGreaterThan(0)
+    expect(wrong.resources.stability).toBeLessThan(base.resources.stability)
+    expect(clean.encounter?.workflowDebt).toBe(0)
+    expect(clean.encounter?.sequenceStreak).toBeGreaterThan(0)
+    expect(deliveryConfidence(clean).value).toBeGreaterThan(deliveryConfidence(wrong).value)
+  })
+
   it('applies cache-room recovery and advances the route', () => {
     const run = createRun(505, 'glm-flash')
     const atCache = { ...run, screen: 'event' as const, currentNodeId: 'l4-a', resources: { ...run.resources, context: 100000 } }
@@ -106,7 +123,28 @@ describe('pricing and progression data', () => {
       expect(model.ratesCny.cached).toBeGreaterThan(0)
       expect(model.ratesCny.cached).toBeLessThanOrEqual(model.ratesCny.input)
       expect(model.sourceUrl.startsWith('https://')).toBe(true)
+      expect(model.trait.length).toBeGreaterThan(3)
+      expect(model.reasoning).toBeGreaterThan(0)
+      expect(model.contextEfficiency).toBeGreaterThan(0)
     }
+    expect(Math.max(...MODELS.map((model) => model.power)) - Math.min(...MODELS.map((model) => model.power))).toBeGreaterThan(0.4)
+    expect(Math.max(...MODELS.map((model) => model.contextEfficiency)) - Math.min(...MODELS.map((model) => model.contextEfficiency))).toBeGreaterThan(0.3)
+  })
+
+  it('keeps ordinary agent actions in the million-token scale', () => {
+    for (const card of ACTION_CARDS.filter((item) => !item.manual)) {
+      expect(card.inputRange[1]).toBeGreaterThanOrEqual(1_000_000)
+      expect(card.outputRange[1]).toBeGreaterThanOrEqual(100_000)
+    }
+  })
+
+  it('makes a strong model materially better at evidence work, not only more expensive', () => {
+    const card = ACTION_CARDS.find((item) => item.id === 'scan-repo')!
+    const weak = playAction(beginNode(createRun(808, 'codax-luna'), 'l0-a'), card)
+    const strong = playAction(beginNode(createRun(808, 'codax-sol'), 'l0-a'), card)
+    expect(strong.encounter?.analysis).toBeGreaterThan(weak.encounter?.analysis ?? 0)
+    expect(strong.resources.context).toBeLessThan(weak.resources.context)
+    expect(strong.resources.budget).toBeLessThan(weak.resources.budget)
   })
 
   it('awards XP and permanent model unlocks at thresholds', () => {

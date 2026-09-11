@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { AlertTriangle, Bot, Box, Check, ChevronDown, CircleDot, Code2, Cpu, Database, FileCode2, FileJson, FileText, Folder, GitCompareArrows, RotateCcw, Search, Send, ShieldCheck, Sparkles, Terminal, TestTube2, Wrench } from 'lucide-react'
 import { ACTION_CARDS, getModel, getProject } from '../game/data'
-import { deliveryConfidence, formatTokens, fuzzyTokenEstimate, randomAt } from '../game/engine'
+import { assessCardSequence, deliveryConfidence, formatTokens, fuzzyTokenEstimate, randomAt } from '../game/engine'
 import type { ActionCard, RunState } from '../game/types'
 import { TinyTag } from './Common'
 
@@ -134,7 +134,7 @@ export function EncounterScreen({
       <aside className="agent-pane">
         <div className="agent-header">
           <div key={model.id} className="agent-avatar model-swap" style={{ '--model-color': model.color } as CSSProperties}><Bot size={17} /></div>
-          <div><span>当前后端</span><strong>{model.parodyName}</strong></div>
+          <div><span>当前后端</span><strong>{model.parodyName}</strong><small className="model-trait">{model.trait} · 推理 {Math.round(model.reasoning * 100)} · 上下文 ×{model.contextEfficiency.toFixed(2)}</small></div>
           <select value={state.selectedModelId} onChange={(event) => onSwitchModel(event.target.value)} aria-label="切换模型">
             {state.availableModelIds.map((id) => <option value={id} key={id}>{getModel(id).parodyName}</option>)}
           </select>
@@ -155,12 +155,13 @@ export function EncounterScreen({
         <div className="action-deck">
           <div className="deck-heading">
             <div><span className="eyebrow">ACTION DECK</span><strong>选择下一步</strong></div>
-            <small>{encounter.actionCount} 次操作</small>
+            <small>{encounter.workflowDebt > 0 ? `流程债务 ${encounter.workflowDebt.toFixed(1)}` : `顺序连击 ${encounter.sequenceStreak}`} · {encounter.actionCount} 次</small>
           </div>
           <div className="card-hand">
             {hand.map((card) => {
               const Icon = KIND_ICON[card.kind]
               const estimate = fuzzyTokenEstimate(card, model)
+              const sequence = assessCardSequence(encounter, card)
               const cooldown = encounter.cooldowns[card.id] ?? 0
               const resourceBlocked = state.resources.time < card.timeCost
               return (
@@ -175,6 +176,7 @@ export function EncounterScreen({
                   <strong>{card.name}</strong>
                   <code>{card.command}</code>
                   <p>{card.description}</p>
+                  <div className={`card-sequence ${sequence.ready ? 'ready' : 'warning'}`}><span>{sequence.ready ? '✓ 顺序可用' : '⚠ 先补证据'}</span><small>{sequence.ready ? sequence.hint : `缺少 ${sequence.missing.join('、')}`}</small></div>
                   <div className="card-cost"><span>{estimate.tokens}</span><b>{estimate.cost}</b><small>{card.timeCost} 格</small></div>
                   {cooldown > 0 && <div className="cooldown-mask"><RotateCcw size={15} />冷却 {cooldown}</div>}
                 </button>

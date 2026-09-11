@@ -3,6 +3,7 @@ import type {
   ActionCard,
   BuffState,
   ChoiceEffect,
+  EncounterState,
   EventSpec,
   MetaProgress,
   ModelSpec,
@@ -92,7 +93,8 @@ export function createRun(seed: number, modelId: string, retry = false): RunStat
     availableNodeIds: ['l0-a', 'l0-b', 'l0-c'],
     selectedModelId: modelId,
     availableModelIds: availableModels,
-    resources: { budget: 9.6, budgetMax: 9.6, context: 8000, contextMax: 180000, time: 58, timeMax: 58, stability: 78 },
+    // Token 量级已经提升到百万级；预算也同步放大，仍然保持一局约十分钟的资源压力。
+    resources: { budget: 6800, budgetMax: 7600, context: 10000, contextMax: 220000, time: 58, timeMax: 58, stability: 78 },
     encounter: null,
     logs: [
       { id: 'boot-1', role: 'system', title: 'Workspace ready', body: '沙箱已创建。预算、上下文与 deadline 监控已接管。', meta: `seed:${seed}` },
@@ -105,6 +107,19 @@ export function createRun(seed: number, modelId: string, retry = false): RunStat
     score: 0,
     pendingReward: 0,
     metaRecorded: false,
+  }
+}
+
+/** Backfills fields added by the strategy layer for runs saved by the previous build. */
+export function normalizeRun(state: RunState): RunState {
+  if (!state.encounter) return state
+  return {
+    ...state,
+    encounter: {
+      ...state.encounter,
+      workflowDebt: state.encounter.workflowDebt ?? 0,
+      sequenceStreak: state.encounter.sequenceStreak ?? 0,
+    },
   }
 }
 
@@ -128,6 +143,8 @@ export function beginNode(state: RunState, nodeId: string): RunState {
         revealedRisk: 0,
         deliveryAttempts: 0,
         actionCount: 0,
+        workflowDebt: 0,
+        sequenceStreak: 0,
         cooldowns: {},
         codeMode: 'diff',
       },
@@ -157,16 +174,56 @@ export function fuzzyTokenEstimate(card: ActionCard, model: ModelSpec): { tokens
   }
 }
 
+const PREREQUISITE_LABELS: Record<'analysis' | 'code' | 'test' | 'reviews', string> = {
+  analysis: '调查',
+  code: '实现',
+  test: '验证',
+  reviews: '评审',
+}
+
+export interface SequenceAssessment {
+  missing: string[]
+  severity: number
+  ready: boolean
+  hint: string
+}
+
+export function assessCardSequence(encounter: EncounterState, card: ActionCard): SequenceAssessment {
+  const missing: string[] = []
+  let severity = 0
+  const requirements = Object.entries(card.requires ?? {}) as Array<[keyof typeof PREREQUISITE_LABELS, number]>
+  for (const [key, required] of requirements) {
+    const current = encounter[key]
+    if (current < required) {
+      const gap = required - current
+      missing.push(`${PREREQUISITE_LABELS[key]} ${required}点`)
+      severity += key === 'reviews' ? 0.8 * gap : 0.6 * gap
+    }
+  }
+  return {
+    missing,
+    severity: Math.min(2.4, severity),
+    ready: missing.length === 0,
+    hint: card.sequenceTip ?? (missing.length ? `建议先补：${missing.join('、')}` : '顺序自由'),
+  }
+}
+
 export function playAction(state: RunState, card: ActionCard): RunState {
   if (!state.encounter || state.screen !== 'encounter') return state
   if ((state.encounter.cooldowns[card.id] ?? 0) > 0) return state
 
   const project = getProject(state.encounter.projectId)
   const model = getModel(state.selectedModelId)
+  const sequence = assessCardSequence(state.encounter, card)
   let cursor = state.rngCursor
   const complexity = 0.82 + project.difficulty * 0.08
-  const input = card.manual ? 0 : Math.round(lerp(card.inputRange[0], card.inputRange[1], randomAt(state.seed, cursor++)) * complexity)
-  const output = card.manual ? 0 : Math.round(lerp(card.outputRange[0], card.outputRange[1], randomAt(state.seed, cursor++)) * complexity)
+  const sequenceTokenMultiplier = sequence.ready
+    ? Math.max(0.9, 1 - Math.min(0.1, state.encounter.sequenceStreak * 0.018 * model.workflowDiscipline))
+    : 1 + sequence.severity * 0.17
+  const baseInput = card.manual ? 0 : Math.round(lerp(card.inputRange[0], card.inputRange[1], randomAt(state.seed, cursor++)) * complexity)
+  const baseOutput = card.manual ? 0 : Math.round(lerp(card.outputRange[0], card.outputRange[1], randomAt(state.seed, cursor++)) * complexity)
+  const input = Math.round(baseInput * sequenceTokenMultiplier)
+  const output = Math.round(baseOutput * sequenceTokenMultiplier)
   const cacheBuff = state.buffs.reduce((sum, buff) => sum + (buff.cacheBonus ?? 0), 0)
   const cacheRatio = card.manual ? 0 : clamp(0.08 + (state.resources.context / state.resources.contextMax) * 0.42 + cacheBuff, 0.04, 0.82)
   const cached = Math.round(input * cacheRatio)
@@ -191,24 +248,38 @@ export function playAction(state: RunState, card: ActionCard): RunState {
 
   const reliabilityBuff = buffs.reduce((sum, buff) => sum + (buff.reliabilityBonus ?? 0), 0)
   const effectiveReliability = clamp(model.reliability + reliabilityBuff, 0.2, 0.99)
+  const orderReliabilityPenalty = sequence.ready ? 0 : sequence.severity * Math.max(0.055, 0.13 - model.workflowDiscipline * 0.045)
   const outcomeRoll = randomAt(state.seed, cursor++)
-  const isClean = outcomeRoll <= effectiveReliability - (card.risk === '高' ? 0.12 : card.risk === '中' ? 0.04 : 0)
-  const power = isClean ? model.power : Math.max(0.55, model.power * 0.62)
+  const isClean = outcomeRoll <= effectiveReliability - orderReliabilityPenalty - (card.risk === '高' ? 0.12 : card.risk === '中' ? 0.04 : 0)
+  const reasoningFactor = 0.94 + model.reasoning * 0.06
+  const sequenceEffectMultiplier = sequence.ready ? 1 + Math.min(0.1, state.encounter.sequenceStreak * 0.02 * model.workflowDiscipline) : 0.86
+  const power = isClean
+    ? model.power * reasoningFactor * sequenceEffectMultiplier
+    : Math.max(0.55, model.power * (0.56 + model.failureRecovery * 0.1))
   const deltaAnalysis = scaledEffect(card.effect.analysis, power)
   const deltaCode = scaledEffect(card.effect.code, power)
   const deltaTest = scaledEffect(card.effect.test, power)
-  const deltaReview = scaledEffect(card.effect.review, isClean ? 1 : 0.65)
-  const unstable = !isClean ? (card.risk === '高' ? -9 : card.risk === '中' ? -5 : -2) : 0
-  const stabilityDelta = (card.effect.stability ?? 0) + unstable
+  const deltaReview = scaledEffect(card.effect.review, isClean ? reasoningFactor : 0.58 + model.failureRecovery * 0.12)
+  const unstable = !isClean ? (card.risk === '高' ? -9 : card.risk === '中' ? -5 : -2) * (1 - model.failureRecovery * 0.18) : 0
+  const orderStability = sequence.ready ? (state.encounter.sequenceStreak > 0 ? 1 : 0) : -Math.max(2, Math.ceil(sequence.severity * (4.2 - model.workflowDiscipline * 1.35)))
+  const stabilityDelta = (card.effect.stability ?? 0) + unstable + orderStability
   const timeCost = card.manual ? card.timeCost : Math.max(1, Math.ceil(card.timeCost / model.speed))
-  const addedContext = Math.round((input * 0.16 + output) * card.contextLoad)
+  const sequenceContextMultiplier = sequence.ready
+    ? Math.max(0.84, 1 - Math.min(0.12, state.encounter.sequenceStreak * 0.02 * model.workflowDiscipline))
+    : 1 + sequence.severity * 0.3
+  const addedContext = card.manual
+    ? 0
+    : Math.round(((input * 0.0006 + output * 0.004) * card.contextLoad * model.contextEfficiency) * sequenceContextMultiplier)
   const reduction = card.effect.contextReduction ?? 0
   const nextContext = Math.max(2000, Math.round((state.resources.context + addedContext) * (1 - reduction)))
   const progressLabel = progressSummary(deltaAnalysis, deltaCode, deltaTest)
-  const exactMeta = `↑${formatTokens(input)} · cache ${formatTokens(cached)} · ↓${formatTokens(output)} · ¥${cost.toFixed(3)}${discountLabel}`
-  const body = isClean
-    ? `${card.description} ${progressLabel}`
-    : `Agent 给出了一个很自信的结果，但留下了可疑改动。${progressLabel}`
+  const sequenceMeta = sequence.ready
+    ? (state.encounter.sequenceStreak > 0 ? ` · 顺序连击 ${state.encounter.sequenceStreak + 1}` : '')
+    : ` · 顺序罚则：缺少${sequence.missing.join('、')} · 流程债务 +${sequence.severity.toFixed(1)}`
+  const exactMeta = `↑${formatTokens(input)} · cache ${formatTokens(cached)} · ↓${formatTokens(output)} · ¥${cost.toFixed(3)}${discountLabel}${sequenceMeta}`
+  const body = sequence.ready
+    ? `${isClean ? card.description : 'Agent 给出了一个很自信的结果，但留下了可疑改动。'} ${progressLabel}`
+    : `顺序错位：${card.name} 早于必要证据执行，返工与风险一起增加。${isClean ? progressLabel : '结果还留下了可疑改动。'}`
 
   const cooldowns: Record<string, number> = {}
   for (const [id, value] of Object.entries(state.encounter.cooldowns)) {
@@ -235,12 +306,14 @@ export function playAction(state: RunState, card: ActionCard): RunState {
       reviews: Math.max(0, state.encounter.reviews + deltaReview),
       revealedRisk: Math.min(project.hiddenRisk, state.encounter.revealedRisk + Math.max(0, deltaReview) + (card.id === 'read-logs' ? 1 : 0)),
       actionCount: state.encounter.actionCount + 1,
+      workflowDebt: clamp(state.encounter.workflowDebt + (sequence.ready ? -0.18 : sequence.severity), 0, 5),
+      sequenceStreak: sequence.ready ? Math.min(6, state.encounter.sequenceStreak + 1) : 0,
       cooldowns,
       codeMode: card.testAction ? 'terminal' : card.kind === 'build' ? 'diff' : state.encounter.codeMode,
     },
     usage: card.manual ? state.usage : [...state.usage, { action: card.name, modelId: model.id, input, cached, output, cost }],
-    score: state.score + Math.max(0, deltaAnalysis + deltaCode + deltaTest + deltaReview) * 12,
-    logs: pushLog(state.logs, isClean ? (card.testAction ? 'tool' : 'agent') : 'warning', card.name, body, exactMeta),
+    score: state.score + Math.max(0, deltaAnalysis + deltaCode + deltaTest + deltaReview) * 12 + (sequence.ready ? 8 : -Math.round(sequence.severity * 5)),
+    logs: pushLog(state.logs, !isClean || !sequence.ready ? 'warning' : (card.testAction ? 'tool' : 'agent'), card.name, body, exactMeta),
   }
 
   return checkDefeat(next)
@@ -257,11 +330,16 @@ export function deliveryConfidence(state: RunState): { value: number; label: str
   const readiness = analysisRatio * 0.28 + codeRatio * 0.4 + testRatio * 0.32
   const unresolved = Math.max(0, project.hiddenRisk - state.encounter.reviews * 0.62 - state.encounter.test * 0.22 - state.encounter.analysis * 0.12)
   const stability = (state.resources.stability - 50) / 250
-  const value = clamp(0.1 + readiness * 0.64 + (model.reliability + reliabilityBuff) * 0.15 + stability - unresolved * 0.045, 0.08, 0.98)
+  const workflowPenalty = state.encounter.workflowDebt * 0.038
+  const value = clamp(0.1 + readiness * 0.64 + (model.reliability + reliabilityBuff) * 0.15 + model.reasoning * 0.035 + stability - unresolved * 0.045 - workflowPenalty, 0.08, 0.98)
   const label = value >= 0.86 ? '很稳' : value >= 0.68 ? '可交付' : value >= 0.48 ? '有风险' : value >= 0.28 ? '危险' : '像在许愿'
-  const detail = state.encounter.revealedRisk >= project.hiddenRisk
+  const riskDetail = state.encounter.revealedRisk >= project.hiddenRisk
     ? `已识别 ${project.hiddenRisk} 个主要风险`
     : `至少发现 ${state.encounter.revealedRisk} 个风险，可能还有遗漏`
+  const debtDetail = state.encounter.workflowDebt > 0
+    ? `流程债务 ${state.encounter.workflowDebt.toFixed(1)}，交付会打折`
+    : '操作顺序干净，交付不吃暗亏'
+  const detail = `${riskDetail} · ${debtDetail}`
   return { value, label, detail }
 }
 
@@ -302,7 +380,7 @@ export function attemptDelivery(state: RunState): RunState {
     resources: {
       ...state.resources,
       time: state.resources.time - 3,
-      budget: state.resources.budget - 0.16,
+      budget: state.resources.budget - 12,
       stability: clamp(state.resources.stability - 13, 0, 100),
     },
     encounter: {
@@ -436,7 +514,7 @@ export function updateMeta(meta: MetaProgress, state: RunState): MetaProgress {
 }
 
 export function finalScore(state: RunState): number {
-  const resourceBonus = Math.max(0, state.resources.budget) * 90 + Math.max(0, state.resources.time) * 12 + state.resources.stability * 4
+  const resourceBonus = Math.max(0, state.resources.budget) * 0.9 + Math.max(0, state.resources.time) * 12 + state.resources.stability * 4
   return Math.round(state.score + resourceBonus)
 }
 

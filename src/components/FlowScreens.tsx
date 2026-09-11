@@ -56,7 +56,7 @@ export function RewardScreen({ state, onChoose }: { state: RunState; onChoose: (
               <button key={`${reward.type}-${reward.id}`} className="reward-card model-reward" onClick={() => onChoose(reward)} style={{ '--reward-color': model.color } as CSSProperties}>
                 <span className="reward-number">0{index + 1}</span><Bot size={25} />
                 <TinyTag tone="live">新模型 · 本局</TinyTag>
-                <h2>{model.parodyName}</h2><p>{model.realName}</p>
+                <h2>{model.parodyName}</h2><p>{model.realName}</p><small className="model-trait reward-trait">{model.trait}</small>
                 <div className="reward-stats"><span>能力 <b>{Math.round(model.power * 100)}</b></span><span>可靠 <b>{Math.round(model.reliability * 100)}</b></span><span>速度 <b>{Math.round(model.speed * 100)}</b></span></div>
                 <strong className="reward-action">接入并切换<ChevronRight size={16} /></strong>
               </button>

@@ -4,6 +4,7 @@ export type Screen = 'home' | 'map' | 'encounter' | 'event' | 'reward' | 'summar
 export type NodeType = 'project' | 'event' | 'cache' | 'boss'
 export type CardKind = 'inspect' | 'build' | 'verify' | 'control'
 export type RiskLevel = '低' | '中' | '高'
+export type WorkflowStage = '调查' | '计划' | '实现' | '验证' | '控制'
 
 export interface PriceRate {
   input: number
@@ -22,6 +23,11 @@ export interface ModelSpec {
   power: number
   reliability: number
   speed: number
+  reasoning: number
+  contextEfficiency: number
+  workflowDiscipline: number
+  failureRecovery: number
+  trait: string
   color: string
   sourceUrl: string
   sourceLabel: string
@@ -50,6 +56,9 @@ export interface ActionCard {
   cooldown: number
   contextLoad: number
   effect: CardEffect
+  requires?: Partial<Record<'analysis' | 'code' | 'test' | 'reviews', number>>
+  workflowStage?: WorkflowStage
+  sequenceTip?: string
   manual?: boolean
   testAction?: boolean
 }
@@ -101,6 +110,8 @@ export interface EncounterState {
   revealedRisk: number
   deliveryAttempts: number
   actionCount: number
+  workflowDebt: number
+  sequenceStreak: number
   cooldowns: Record<string, number>
   codeMode: 'source' | 'diff' | 'terminal'
 }

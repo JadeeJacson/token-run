@@ -336,6 +336,21 @@ a { color: inherit; }
 @keyframes warning-message { 0% { transform: translateX(0); } 28% { transform: translateX(-4px); } 52% { transform: translateX(3px); } 76% { transform: translateX(-1px); } 100% { transform: translateX(0); } }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
 
+/* Model differences and workflow feedback stay local to the surface that caused them. */
+.model-trait { display: block; margin-top: 3px; color: var(--accent); font: 500 8px/1.25 "IBM Plex Mono", monospace; }
+.side-model-title > div { min-width: 0; }
+.side-model-bars { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.side-model-title .model-trait { color: var(--text-2); font-size: 8px; white-space: normal; }
+.agent-header > div:nth-child(2) .model-trait { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reward-trait { margin-top: 8px; text-align: left; }
+.deck-heading > small { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-sequence { min-height: 25px; margin: 3px 0 6px; padding: 4px 5px; display: flex; flex-direction: column; justify-content: center; gap: 2px; border-left: 2px solid var(--green); background: color-mix(in srgb, var(--green) 5%, var(--panel-2)); }
+.card-sequence span { color: var(--green); font-size: 8px; font-weight: 700; }
+.card-sequence small { overflow: hidden; color: var(--faint); font-size: 7px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.card-sequence.warning { border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 6%, var(--panel-2)); }
+.card-sequence.warning span { color: var(--yellow); }
+.card-sequence.warning small { color: color-mix(in srgb, var(--yellow) 70%, var(--muted)); }
+
 @media (max-width: 1280px) {
   .game-topbar { grid-template-columns: 270px 1fr 250px; }
   .topbar-actions .text-icon-button span { display: none; }

@@ -112,7 +112,7 @@ export function HomeScreen({
                   style={{ '--model-color': model.color } as CSSProperties}
                 >
                   <span className="model-sigil">{isUnlocked ? model.parodyName.slice(0, 1) : <LockKeyhole size={14} />}</span>
-                  <span><strong>{model.parodyName}</strong><small>{isUnlocked ? `${model.provider} · 可靠 ${Math.round(model.reliability * 100)}` : `${threshold ?? '?'} XP 解锁`}</small></span>
+                  <span><strong>{model.parodyName}</strong><small>{isUnlocked ? `${model.provider} · ${model.trait}` : `${threshold ?? '?'} XP 解锁`}</small></span>
                 </button>
               )
             })}
