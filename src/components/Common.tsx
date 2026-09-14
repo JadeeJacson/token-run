@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Activity, Clock3, Database, Flame, Moon, Sparkles, Sun, TerminalSquare, Volume2, VolumeX, X } from 'lucide-react'
 import { formatCny, formatTokens } from '../game/engine'
@@ -60,7 +61,7 @@ export function ThemeShellControls({
 }) {
   return (
     <div className={`shell-controls ${compact ? 'compact' : ''}`}>
-      <button className="icon-button text-icon-button" onClick={onShell} title="切换 Agent 外壳">
+      <button className="icon-button text-icon-button" onClick={onShell} title="切换 Agent 外壳" aria-label={`切换 Agent 外壳，当前 ${shell === 'codax' ? 'Codax' : 'Cloude'}`}>
         <TerminalSquare size={15} />
         <span>{shell === 'codax' ? 'Codax' : 'Cloude'}</span>
       </button>
@@ -72,17 +73,56 @@ export function ThemeShellControls({
       <button className={`icon-button motion-toggle ${reducedMotion ? '' : 'active'}`} onClick={onMotion} title={reducedMotion ? '开启完整动效' : '精简动态效果'} aria-label={reducedMotion ? '开启完整动效' : '精简动态效果'} aria-pressed={!reducedMotion}>
         <Sparkles size={15} />
       </button>
-      <button className="icon-button" onClick={onTheme} title="切换浅色/深色">
+      <button className="icon-button" onClick={onTheme} title="切换浅色/深色" aria-label={`切换为${theme === 'dark' ? '浅色' : '深色'}主题`}>
         {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       </button>
     </div>
   )
 }
 
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
 export function Modal({ title, eyebrow, children, onClose, wide = false }: { title: string; eyebrow?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dialogRef.current?.focus()
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const nodes = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (nodes.length === 0) {
+        event.preventDefault()
+        return
+      }
+      const active = document.activeElement
+      const outside = !(active instanceof HTMLElement) || !dialogRef.current.contains(active)
+      if (event.shiftKey && (outside || active === nodes[0])) {
+        event.preventDefault()
+        nodes[nodes.length - 1].focus()
+      } else if (!event.shiftKey && (outside || active === nodes[nodes.length - 1])) {
+        event.preventDefault()
+        nodes[0].focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      restoreFocusRef.current?.focus?.()
+    }
+  }, [onClose])
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section ref={dialogRef} tabIndex={-1} className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-header">
           <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>

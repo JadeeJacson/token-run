@@ -22,7 +22,8 @@ jobs:
 
       - run: npm ci
 
-      - name: 类型检查、测试与构建
+      - name: Lint、测试与构建
         run: |
+          npm run lint
           npm test
           npm run build

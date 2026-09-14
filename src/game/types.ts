@@ -157,6 +157,8 @@ export interface UsageRecord {
 }
 
 export interface RunState {
+  /** 存档结构版本，用于旧档迁移。 */
+  version: number
   seed: number
   rngCursor: number
   retryUsed: boolean
@@ -170,25 +172,31 @@ export interface RunState {
   resources: RunResources
   encounter: EncounterState | null
   logs: LogEntry[]
+  /** 单调递增的日志序号，用于生成确定性日志 id。 */
+  logSeq: number
   buffs: BuffState[]
   usage: UsageRecord[]
   completedProjects: number
   failedProjects: number
   score: number
+  /** 流程纪律累计：按序执行 +1，错序 -1。 */
+  disciplineScore: number
   pendingReward: number
-  metaRecorded: boolean
   lastOutcome?: 'victory' | 'defeat'
   lastMessage?: string
 }
 
 export interface MetaProgress {
-  version: 1
+  /** 存档结构版本；低于当前版本时重置不可比的最高分。 */
+  version: number
   xp: number
   runs: number
   victories: number
   bestScore: number
   unlockedModels: string[]
   seenProjects: string[]
+  /** 已结算过职业经验的 run 标识，保证同一 run 只入账一次。 */
+  recordedRunKeys: string[]
 }
 
 export interface Settings {

@@ -344,6 +344,31 @@ a { color: inherit; }
 .agent-header > div:nth-child(2) .model-trait { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reward-trait { margin-top: 8px; text-align: left; }
 .deck-heading > small { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 轻量语法着色：只区分注释、字符串、数字与关键字，保持代码块原有的等宽排版。 */
+.code-block em.tok { font-style: normal; }
+.code-block em.tok-keyword { color: var(--violet); }
+.code-block em.tok-string { color: var(--green); }
+.code-block em.tok-number { color: var(--yellow); }
+.code-block em.tok-comment { color: var(--faint); font-style: italic; }
+
+/* 结算页的分数构成：让分配权重的调整对玩家可见。 */
+.score-breakdown { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 11px; }
+.score-breakdown span { padding: 5px 10px; color: var(--text-2); border: 1px solid var(--border-soft); border-radius: 999px; background: var(--panel); font: 500 9px/1 "IBM Plex Mono", monospace; }
+.score-breakdown b { margin-left: 6px; color: var(--accent); }
+
+/* 休整节点的溢出保护：选项不可用时给出明确的静态观感。 */
+.choice-card.is-disabled { opacity: .52; cursor: not-allowed; filter: grayscale(.4); }
+.choice-card.is-disabled:hover { transform: none; }
+.choice-card.is-disabled .choice-cta { color: var(--red); }
+
+/* 错误边界兜底页：崩溃时也要保持与游戏一致的主题观感。 */
+.crash-screen { min-height: 100vh; padding: 48px 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; background: var(--bg); color: var(--text); }
+.crash-screen h1 { margin: 4px 0; font-size: 28px; letter-spacing: -.03em; }
+.crash-screen p { max-width: 520px; color: var(--text-2); font-size: 12px; line-height: 1.7; }
+.crash-detail { max-width: min(720px, 90vw); overflow-x: auto; padding: 12px 14px; text-align: left; color: var(--red); border: 1px solid var(--border); border-radius: 10px; background: var(--panel-solid); font: 500 11px/1.6 "IBM Plex Mono", Consolas, monospace; }
+.crash-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.crash-screen small { color: var(--muted); font-size: 10px; }
 .card-sequence { min-height: 25px; margin: 3px 0 6px; padding: 4px 5px; display: flex; flex-direction: column; justify-content: center; gap: 2px; border-left: 2px solid var(--green); background: color-mix(in srgb, var(--green) 5%, var(--panel-2)); }
 .card-sequence span { color: var(--green); font-size: 8px; font-weight: 700; }
 .card-sequence small { overflow: hidden; color: var(--faint); font-size: 7px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }

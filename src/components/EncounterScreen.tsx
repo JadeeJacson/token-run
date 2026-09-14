@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { AlertTriangle, Bot, Box, Check, ChevronDown, CircleDot, Code2, Cpu, Database, FileCode2, FileJson, FileText, Folder, GitCompareArrows, RotateCcw, Search, Send, ShieldCheck, Sparkles, Terminal, TestTube2, Wrench } from 'lucide-react'
-import { ACTION_CARDS, getModel, getProject } from '../game/data'
-import { assessCardSequence, deliveryConfidence, formatTokens, fuzzyTokenEstimate, randomAt } from '../game/engine'
+import { getModel, getProject } from '../game/data'
+import { assessCardSequence, buildHand, deliveryConfidence, fuzzyTokenEstimate } from '../game/engine'
 import type { ActionCard, RunState } from '../game/types'
 import { TinyTag } from './Common'
 
@@ -13,16 +13,16 @@ const KIND_ICON = {
   control: Database,
 }
 
-function buildHand(state: RunState): ActionCard[] {
-  if (!state.encounter) return []
-  const requiredIds = ['scan-repo', 'precision-patch', 'unit-tests', 'compress-context']
-  const extras = ACTION_CARDS.filter((card) => !requiredIds.includes(card.id))
-    .map((card, index) => ({ card, order: randomAt(state.seed + state.encounter!.actionCount * 31, index + 200) }))
-    .sort((a, b) => a.order - b.order)
-    .slice(0, 3)
-    .map((entry) => entry.card)
-  return [...requiredIds.map((id) => ACTION_CARDS.find((card) => card.id === id)!), ...extras]
-}
+const KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'await', 'async',
+  'import', 'from', 'export', 'default', 'class', 'new', 'try', 'catch', 'finally', 'throw',
+  'typeof', 'instanceof', 'interface', 'type', 'enum', 'public', 'private', 'protected', 'static',
+  'def', 'self', 'None', 'True', 'False', 'and', 'or', 'not', 'in', 'is', 'lambda', 'with',
+  'this', 'switch', 'case', 'break', 'continue', 'extends', 'implements', 'void', 'using',
+  'null', 'undefined', 'true', 'false', 'as', 'of', 'readonly', 'declare',
+])
+
+const TOKEN_SPLIT = /(\/\/[^\n]*|#(?![A-Za-z])[^\n]*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b)/g
 
 export function EncounterScreen({
   state,
@@ -218,8 +218,21 @@ function TerminalView({ state, command }: { state: RunState; command: string }) 
   </div>
 }
 
-function highlight(line: string) {
-  return line
+function highlight(line: string): ReactNode {
+  const parts = line.split(TOKEN_SPLIT)
+  return parts.map((part, index) => {
+    if (!part) return null
+    const tone = classify(part)
+    return tone ? <em key={index} className={`tok ${tone}`}>{part}</em> : part
+  })
+}
+
+function classify(token: string): string | null {
+  if (token.startsWith('//') || (token.startsWith('#') && !/[A-Za-z]/.test(token[1] ?? ''))) return 'tok-comment'
+  if (/^["'`]/.test(token)) return 'tok-string'
+  if (/^\d/.test(token)) return 'tok-number'
+  if (KEYWORDS.has(token)) return 'tok-keyword'
+  return null
 }
 
 function kindName(kind: ActionCard['kind']) {

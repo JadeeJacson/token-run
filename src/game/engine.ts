@@ -1,7 +1,6 @@
 import { ACTION_CARDS, BUFFS, EVENTS, MODELS, PROJECTS, STARTER_MODEL_IDS, getModel, getProject } from './data'
 import type {
   ActionCard,
-  BuffState,
   ChoiceEffect,
   EncounterState,
   EventSpec,
@@ -12,14 +11,20 @@ import type {
   RunState,
 } from './types'
 
+/** 当前存档结构版本。破坏性数值调整时递增，旧档的 bestScore 会随之重置。 */
+export const META_VERSION = 2
+/** RunState 结构版本，用于旧档迁移。 */
+export const RUN_VERSION = 2
+
 export const DEFAULT_META: MetaProgress = {
-  version: 1,
+  version: META_VERSION,
   xp: 0,
   runs: 0,
   victories: 0,
   bestScore: 0,
   unlockedModels: [...STARTER_MODEL_IDS],
   seenProjects: [],
+  recordedRunKeys: [],
 }
 
 export const MODEL_UNLOCKS: Record<string, number> = {
@@ -83,6 +88,7 @@ export function buildRoute(seed: number): RouteNode[] {
 export function createRun(seed: number, modelId: string, retry = false): RunState {
   const availableModels = [...new Set([...STARTER_MODEL_IDS, modelId])]
   return {
+    version: RUN_VERSION,
     seed,
     rngCursor: 1,
     retryUsed: retry,
@@ -97,29 +103,34 @@ export function createRun(seed: number, modelId: string, retry = false): RunStat
     resources: { budget: 6800, budgetMax: 7600, context: 10000, contextMax: 220000, time: 58, timeMax: 58, stability: 78 },
     encounter: null,
     logs: [
-      { id: 'boot-1', role: 'system', title: 'Workspace ready', body: '沙箱已创建。预算、上下文与 deadline 监控已接管。', meta: `seed:${seed}` },
-      { id: 'boot-2', role: 'agent', title: getModel(modelId).parodyName, body: '我准备好了。理论上。请选择第一个项目。' },
+      { id: 'log-0', role: 'system', title: 'Workspace ready', body: '沙箱已创建。预算、上下文与 deadline 监控已接管。', meta: `seed:${seed}` },
+      { id: 'log-1', role: 'agent', title: getModel(modelId).parodyName, body: '我准备好了。理论上。请选择第一个项目。' },
     ],
+    logSeq: 2,
     buffs: [],
     usage: [],
     completedProjects: 0,
     failedProjects: 0,
     score: 0,
+    disciplineScore: 0,
     pendingReward: 0,
-    metaRecorded: false,
   }
 }
 
-/** Backfills fields added by the strategy layer for runs saved by the previous build. */
+/** Backfills fields added by later builds so runs saved by an older version stay playable. */
 export function normalizeRun(state: RunState): RunState {
-  if (!state.encounter) return state
   return {
     ...state,
-    encounter: {
-      ...state.encounter,
-      workflowDebt: state.encounter.workflowDebt ?? 0,
-      sequenceStreak: state.encounter.sequenceStreak ?? 0,
-    },
+    version: RUN_VERSION,
+    logSeq: state.logSeq ?? state.logs.length,
+    disciplineScore: state.disciplineScore ?? 0,
+    encounter: state.encounter
+      ? {
+        ...state.encounter,
+        workflowDebt: state.encounter.workflowDebt ?? 0,
+        sequenceStreak: state.encounter.sequenceStreak ?? 0,
+      }
+      : null,
   }
 }
 
@@ -148,7 +159,7 @@ export function beginNode(state: RunState, nodeId: string): RunState {
         cooldowns: {},
         codeMode: 'diff',
       },
-      logs: pushLog(state.logs, 'system', project.title, project.brief, `${project.kind} · 难度 ${project.difficulty}/5`),
+      ...appendLog(state, 'system', project.title, project.brief, `${project.kind} · 难度 ${project.difficulty}/5`),
     }
   }
 
@@ -272,14 +283,20 @@ export function playAction(state: RunState, card: ActionCard): RunState {
     : Math.round(((input * 0.0006 + output * 0.004) * card.contextLoad * model.contextEfficiency) * sequenceContextMultiplier)
   const reduction = card.effect.contextReduction ?? 0
   const nextContext = Math.max(2000, Math.round((state.resources.context + addedContext) * (1 - reduction)))
-  const progressLabel = progressSummary(deltaAnalysis, deltaCode, deltaTest)
+  // 压缩上下文会顺带丢掉一部分调查进度（设计文档里的压缩代价）。
+  // 卡牌自带 analysis: -1，这里再按压缩比例扣一点，用 0.25 的系数避免变成双重惩罚。
+  const analysisLoss = reduction > 0 && state.encounter.analysis > 0
+    ? Math.min(state.encounter.analysis, Math.max(1, Math.round(state.encounter.analysis * reduction * 0.25)))
+    : 0
+  const progressLabel = progressSummary(deltaAnalysis - analysisLoss, deltaCode, deltaTest)
   const sequenceMeta = sequence.ready
     ? (state.encounter.sequenceStreak > 0 ? ` · 顺序连击 ${state.encounter.sequenceStreak + 1}` : '')
     : ` · 顺序罚则：缺少${sequence.missing.join('、')} · 流程债务 +${sequence.severity.toFixed(1)}`
   const exactMeta = `↑${formatTokens(input)} · cache ${formatTokens(cached)} · ↓${formatTokens(output)} · ¥${cost.toFixed(3)}${discountLabel}${sequenceMeta}`
+  const compressionNote = analysisLoss > 0 ? `压缩顺带丢掉了 ${analysisLoss} 点调查进度。` : ''
   const body = sequence.ready
-    ? `${isClean ? card.description : 'Agent 给出了一个很自信的结果，但留下了可疑改动。'} ${progressLabel}`
-    : `顺序错位：${card.name} 早于必要证据执行，返工与风险一起增加。${isClean ? progressLabel : '结果还留下了可疑改动。'}`
+    ? `${isClean ? card.description : 'Agent 给出了一个很自信的结果，但留下了可疑改动。'} ${progressLabel} ${compressionNote}`
+    : `顺序错位：${card.name} 早于必要证据执行，返工与风险一起增加。${isClean ? progressLabel : '结果还留下了可疑改动。'} ${compressionNote}`
 
   const cooldowns: Record<string, number> = {}
   for (const [id, value] of Object.entries(state.encounter.cooldowns)) {
@@ -300,7 +317,7 @@ export function playAction(state: RunState, card: ActionCard): RunState {
     },
     encounter: {
       ...state.encounter,
-      analysis: Math.max(0, state.encounter.analysis + deltaAnalysis),
+      analysis: Math.max(0, state.encounter.analysis + deltaAnalysis - analysisLoss),
       code: Math.max(0, state.encounter.code + deltaCode),
       test: Math.max(0, state.encounter.test + deltaTest),
       reviews: Math.max(0, state.encounter.reviews + deltaReview),
@@ -313,7 +330,8 @@ export function playAction(state: RunState, card: ActionCard): RunState {
     },
     usage: card.manual ? state.usage : [...state.usage, { action: card.name, modelId: model.id, input, cached, output, cost }],
     score: state.score + Math.max(0, deltaAnalysis + deltaCode + deltaTest + deltaReview) * 12 + (sequence.ready ? 8 : -Math.round(sequence.severity * 5)),
-    logs: pushLog(state.logs, !isClean || !sequence.ready ? 'warning' : (card.testAction ? 'tool' : 'agent'), card.name, body, exactMeta),
+    disciplineScore: state.disciplineScore + (sequence.ready ? 1 : -1),
+    ...appendLog(state, !isClean || !sequence.ready ? 'warning' : (card.testAction ? 'tool' : 'agent'), card.name, body, exactMeta),
   }
 
   return checkDefeat(next)
@@ -364,7 +382,7 @@ export function attemptDelivery(state: RunState): RunState {
         ...state.resources,
         time: Math.min(state.resources.timeMax, state.resources.time + 2),
       },
-      logs: pushLog(state.logs, 'success', '交付通过', project.successText, `置信判断：${confidence.label}`),
+      ...appendLog(state, 'success', '交付通过', project.successText, `置信判断：${confidence.label}`),
       pendingReward: node?.type === 'boss' ? 0 : 1,
     }
     if (node?.type === 'boss') {
@@ -389,9 +407,38 @@ export function attemptDelivery(state: RunState): RunState {
       deliveryAttempts: state.encounter.deliveryAttempts + 1,
       codeMode: 'terminal',
     },
-    logs: pushLog(state.logs, 'warning', '交付被打回', project.failureText, `实际结果超出“${confidence.label}”预测`),
+    ...appendLog(state, 'warning', '交付被打回', project.failureText, `实际结果超出“${confidence.label}”预测`),
   }
   return checkDefeat(failed)
+}
+
+/** 每个项目节点都会出现的固定卡，保证基础链路永远可用。 */
+export const FIXED_HAND_IDS = ['scan-repo', 'precision-patch', 'unit-tests', 'compress-context'] as const
+
+/** 由节点 id 派生的稳定盐值：同一节点内手牌固定，不会每执行一次操作就重洗。 */
+function nodeSalt(nodeId: string | null): number {
+  const key = nodeId ?? 'node'
+  let hash = 2166136261
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) % 100_000
+}
+
+export function buildHand(state: RunState): ActionCard[] {
+  if (!state.encounter) return []
+  const salt = state.seed + nodeSalt(state.currentNodeId) * 7 + state.completedNodes.length * 13
+  const fixed = FIXED_HAND_IDS
+    .map((id) => ACTION_CARDS.find((card) => card.id === id))
+    .filter((card): card is ActionCard => Boolean(card))
+  const extras = ACTION_CARDS
+    .filter((card) => !(FIXED_HAND_IDS as readonly string[]).includes(card.id))
+    .map((card, index) => ({ card, order: randomAt(salt, index + 200) }))
+    .sort((a, b) => a.order - b.order)
+    .slice(0, 3)
+    .map((entry) => entry.card)
+  return [...fixed, ...extras]
 }
 
 export function availableRewards(state: RunState): Array<{ type: 'model' | 'buff'; id: string }> {
@@ -416,7 +463,7 @@ export function chooseReward(state: RunState, reward: { type: 'model' | 'buff'; 
       pendingReward: 0,
       selectedModelId: reward.id,
       availableModelIds: [...new Set([...state.availableModelIds, reward.id])],
-      logs: pushLog(state.logs, 'system', '模型已接入', `${getModel(reward.id).parodyName} 已成为当前 Agent 后端。`, '本局解锁'),
+      ...appendLog(state, 'system', '模型已接入', `${getModel(reward.id).parodyName} 已成为当前 Agent 后端。`, '本局解锁'),
     }
   }
 
@@ -436,13 +483,13 @@ export function chooseReward(state: RunState, reward: { type: 'model' | 'buff'; 
     pendingReward: 0,
     buffs,
     resources: { ...state.resources, contextMax: state.resources.contextMax + contextBonus },
-    logs: pushLog(state.logs, 'system', 'Buff 已安装', selected.description, selected.name),
+    ...appendLog(state, 'system', 'Buff 已安装', selected.description, selected.name),
   }
 }
 
 export function resolveEvent(state: RunState, effect: ChoiceEffect, result: string): RunState {
   if (state.screen !== 'event') return state
-  let buffs = [...state.buffs]
+  const buffs = [...state.buffs]
   if (effect.buffId) {
     const buff = BUFFS.find((candidate) => candidate.id === effect.buffId)
     if (buff && !buffs.some((candidate) => candidate.id === buff.id)) buffs.push({ ...buff })
@@ -458,22 +505,80 @@ export function resolveEvent(state: RunState, effect: ChoiceEffect, result: stri
       time: Math.min(state.resources.timeMax, state.resources.time + (effect.time ?? 0)),
       stability: clamp(state.resources.stability + (effect.stability ?? 0), 0, 100),
     },
-    logs: pushLog(state.logs, 'system', '事件结算', result),
+    ...appendLog(state, 'system', '事件结算', result),
   })
   return checkDefeat(next)
 }
 
-export function resolveCache(state: RunState, choice: 'compact' | 'stabilize' | 'deadline'): RunState {
+/** 休整节点「申请延期」换时间需要付出的上下文代价。 */
+export const CACHE_DEADLINE_CONTEXT = 6000
+
+export interface CacheOutcome {
+  context: number
+  time: number
+  stability: number
+  message: string
+  /** 该选择本会把上下文推出窗口；执行前应当被禁用。 */
+  overflow: boolean
+}
+
+/** Single source of truth for the rest node: used both by the engine and by the UI preview. */
+export function cacheOutcome(state: RunState, choice: 'compact' | 'stabilize' | 'deadline'): CacheOutcome {
+  const { context, time, stability, contextMax, timeMax } = state.resources
+  const deadlineContext = context + CACHE_DEADLINE_CONTEXT
+  const outcomes: Record<'compact' | 'stabilize' | 'deadline', CacheOutcome> = {
+    compact: {
+      context: Math.max(2000, Math.round(context * 0.3)),
+      time: time - 1,
+      stability,
+      message: '上下文已压缩到必要摘要。三段闲聊和一个旧报错被遗忘。',
+      overflow: false,
+    },
+    stabilize: {
+      context,
+      time: time - 1,
+      stability: Math.min(100, stability + 18),
+      message: '你整理了分支并补上检查点，代码稳定度恢复。',
+      overflow: false,
+    },
+    deadline: {
+      // 夹到窗口内但不贴边：休整不该因为一次 clamp 就直接判负，
+      // 真正的溢出由 cacheChoicePreview 提前告知并在界面禁用该选项。
+      context: clamp(deadlineContext, 2000, contextMax - 1),
+      time: Math.min(timeMax, time + 5),
+      stability: stability - 3,
+      message: '你用一张精心制作的甘特图换来了五格时间。',
+      overflow: deadlineContext >= contextMax,
+    },
+  }
+  return outcomes[choice]
+}
+
+export type CacheChoice = 'compact' | 'stabilize' | 'deadline'
+
+export interface CacheChoicePreview {
+  context: number
+  overflow: boolean
+  disabled: boolean
+}
+
+/** Lets the rest screen show the exact context each choice produces, and block the overflowing one. */
+export function cacheChoicePreview(state: RunState): Record<CacheChoice, CacheChoicePreview> {
+  const choices: CacheChoice[] = ['compact', 'stabilize', 'deadline']
+  return choices.reduce((acc, choice) => {
+    const outcome = cacheOutcome(state, choice)
+    acc[choice] = { context: outcome.context, overflow: outcome.overflow, disabled: outcome.overflow }
+    return acc
+  }, {} as Record<CacheChoice, CacheChoicePreview>)
+}
+
+export function resolveCache(state: RunState, choice: CacheChoice): RunState {
   if (state.screen !== 'event') return state
-  const effects = {
-    compact: { context: Math.max(2000, Math.round(state.resources.context * 0.3)), time: state.resources.time - 1, stability: state.resources.stability, message: '上下文已压缩到必要摘要。三段闲聊和一个旧报错被遗忘。' },
-    stabilize: { context: state.resources.context, time: state.resources.time - 1, stability: Math.min(100, state.resources.stability + 18), message: '你整理了分支并补上检查点，代码稳定度恢复。' },
-    deadline: { context: state.resources.context + 6000, time: Math.min(state.resources.timeMax, state.resources.time + 5), stability: state.resources.stability - 3, message: '你用一张精心制作的甘特图换来了五格时间。' },
-  }[choice]
+  const effects = cacheOutcome(state, choice)
   const next = completeUtilityNode({
     ...state,
     resources: { ...state.resources, context: effects.context, time: effects.time, stability: effects.stability },
-    logs: pushLog(state.logs, 'system', '休整完成', effects.message),
+    ...appendLog(state, 'system', '休整完成', effects.message),
   })
   return checkDefeat(next)
 }
@@ -488,11 +593,13 @@ export function switchModel(state: RunState, modelId: string): RunState {
   return {
     ...state,
     selectedModelId: modelId,
-    logs: pushLog(state.logs, 'system', '后端切换', `当前模型：${getModel(modelId).parodyName}`, '不消耗 Token'),
+    ...appendLog(state, 'system', '后端切换', `当前模型：${getModel(modelId).parodyName}`, '不消耗 Token'),
   }
 }
 
-export function updateMeta(meta: MetaProgress, state: RunState): MetaProgress {
+export function updateMeta(meta: MetaProgress, state: RunState, runKey?: string): MetaProgress {
+  // 同一局只会结算一次职业经验；runKey 让调用方可以幂等重放。
+  if (runKey && (meta.recordedRunKeys ?? []).includes(runKey)) return meta
   const gainedXp = state.completedProjects + (state.lastOutcome === 'victory' ? 3 : 0)
   const xp = meta.xp + gainedXp
   const thresholdModels = Object.entries(MODEL_UNLOCKS)
@@ -502,20 +609,58 @@ export function updateMeta(meta: MetaProgress, state: RunState): MetaProgress {
     ...meta.seenProjects,
     ...state.completedNodes.map((nodeId) => state.route.find((node) => node.id === nodeId)?.projectId).filter((id): id is string => Boolean(id)),
   ])]
+  const score = finalScore(state)
+  // 计分公式调整后旧最高分与新分数不可比：直接以本局重置，避免老纪录永远打不破。
+  const legacyScore = meta.version < META_VERSION
   return {
     ...meta,
+    version: META_VERSION,
     xp,
     runs: meta.runs + 1,
     victories: meta.victories + (state.lastOutcome === 'victory' ? 1 : 0),
-    bestScore: Math.max(meta.bestScore, finalScore(state)),
+    bestScore: legacyScore ? score : Math.max(meta.bestScore, score),
     unlockedModels: [...new Set([...meta.unlockedModels, ...thresholdModels])],
     seenProjects,
+    recordedRunKeys: runKey ? [...(meta.recordedRunKeys ?? []), runKey].slice(-100) : (meta.recordedRunKeys ?? []),
   }
 }
 
+/** Backfills metadata saved by older builds so missing arrays never break the home screen. */
+export function normalizeMeta(meta: MetaProgress): MetaProgress {
+  return {
+    ...DEFAULT_META,
+    ...meta,
+    unlockedModels: [...new Set([...DEFAULT_META.unlockedModels, ...(meta.unlockedModels ?? [])])],
+    seenProjects: meta.seenProjects ?? [],
+    recordedRunKeys: meta.recordedRunKeys ?? [],
+  }
+}
+
+/**
+ * 终局计分：预算不再单独主导总分。
+ * 资源分只占一部分，交付质量、流程纪律与胜负同样进入总分，
+ * 否则「少花钱」会压过「按顺序、留证据、低返工」的全部策略。
+ */
 export function finalScore(state: RunState): number {
-  const resourceBonus = Math.max(0, state.resources.budget) * 0.9 + Math.max(0, state.resources.time) * 12 + state.resources.stability * 4
-  return Math.round(state.score + resourceBonus)
+  const resourceBonus =
+    Math.max(0, state.resources.budget) * 0.28 +
+    Math.max(0, state.resources.time) * 42 +
+    state.resources.stability * 16
+  const deliveryBonus = state.completedProjects * 300 - state.failedProjects * 180
+  const disciplineBonus = clamp(state.disciplineScore, -12, 24) * 25
+  const victoryBonus = state.lastOutcome === 'victory' ? 400 : 0
+  return Math.round(state.score + resourceBonus + deliveryBonus + disciplineBonus + victoryBonus)
+}
+
+/** 分数构成，供结算界面与文档说明使用。 */
+export function finalScoreBreakdown(state: RunState): Array<{ key: string; label: string; value: number }> {
+  return [
+    { key: 'actions', label: '行动得分', value: Math.round(state.score) },
+    { key: 'projects', label: `交付 ${state.completedProjects} 个项目`, value: state.completedProjects * 300 - state.failedProjects * 180 },
+    { key: 'discipline', label: '流程纪律', value: clamp(state.disciplineScore, -12, 24) * 25 },
+    { key: 'resources', label: '剩余资源', value: Math.round(Math.max(0, state.resources.budget) * 0.28 + Math.max(0, state.resources.time) * 42 + state.resources.stability * 16) },
+    { key: 'victory', label: '交付周五行', value: state.lastOutcome === 'victory' ? 400 : 0 },
+  ]
 }
 
 export function totalUsage(state: RunState): { input: number; cached: number; output: number; cost: number } {
@@ -572,9 +717,20 @@ function completeUtilityNode(state: RunState): RunState {
   }
 }
 
-function pushLog(logs: RunState['logs'], role: RunState['logs'][number]['role'], title: string, body: string, meta?: string): RunState['logs'] {
-  const entry = { id: `${Date.now()}-${logs.length}`, role, title, body, meta }
-  return [...logs.slice(-11), entry]
+/**
+ * Appends one log entry using the run's monotonic counter.
+ * Avoids Date.now() so the same seed and the same decisions always reproduce the same run.
+ */
+export function appendLog(
+  state: RunState,
+  role: RunState['logs'][number]['role'],
+  title: string,
+  body: string,
+  meta?: string,
+): Pick<RunState, 'logs' | 'logSeq'> {
+  const seq = state.logSeq ?? state.logs.length
+  const entry = { id: `log-${seq}`, role, title, body, meta }
+  return { logs: [...state.logs.slice(-11), entry], logSeq: seq + 1 }
 }
 
 function lerp(min: number, max: number, amount: number): number {

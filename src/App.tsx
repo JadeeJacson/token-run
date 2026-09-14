@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import { BookOpen, Bot, ChevronRight, CircleDollarSign, Flame, Gauge, Home, Info, Layers3, Map, Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { BookOpen, Bot, CircleDollarSign, Flame, Gauge, Home, Info, Layers3, Map, Sparkles } from 'lucide-react'
 import { BrandMark, ResourceBar, ThemeShellControls, TinyTag } from './components/Common'
 import { EncounterScreen } from './components/EncounterScreen'
 import { EventScreen, RewardScreen, SummaryScreen } from './components/FlowScreens'
 import { HomeScreen } from './components/HomeScreen'
 import { GuideOverlay, PriceAtlas } from './components/Overlays'
 import { RouteMap } from './components/RouteMap'
-import { BUFFS, PRICE_SNAPSHOT, STARTER_MODEL_IDS, getModel } from './game/data'
+import { PRICE_SNAPSHOT, STARTER_MODEL_IDS, getModel } from './game/data'
 import { audioDirector } from './game/audio'
 import {
   DEFAULT_META,
@@ -14,6 +14,7 @@ import {
   beginNode,
   chooseReward,
   createRun,
+  normalizeMeta,
   normalizeRun,
   playAction,
   resolveCache,
@@ -22,12 +23,16 @@ import {
   switchModel,
   updateMeta,
 } from './game/engine'
+import {
+  STORAGE_META,
+  STORAGE_MODEL,
+  STORAGE_RUN,
+  STORAGE_SETTINGS,
+  readStorage,
+  removeStorage,
+  writeStorage,
+} from './game/storage'
 import type { ActionCard, ChoiceEffect, MetaProgress, RunState, Settings } from './game/types'
-
-const STORAGE_META = 'token-burner.meta.v1'
-const STORAGE_RUN = 'token-burner.active-run.v1'
-const STORAGE_SETTINGS = 'token-burner.settings.v1'
-const STORAGE_MODEL = 'token-burner.start-model.v1'
 
 const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
@@ -38,22 +43,21 @@ const DEFAULT_SETTINGS: Settings = {
 
 type Overlay = 'atlas' | 'guide' | null
 export default function App() {
-  const [meta, setMeta] = useState<MetaProgress>(() => readStorage(STORAGE_META, DEFAULT_META))
+  const [meta, setMeta] = useState<MetaProgress>(() => normalizeMeta(readStorage(STORAGE_META, DEFAULT_META)))
   const [settings, setSettings] = useState<Settings>(() => readStorage(STORAGE_SETTINGS, DEFAULT_SETTINGS))
   const [savedRun, setSavedRun] = useState<RunState | null>(() => {
     const stored = readStorage<RunState | null>(STORAGE_RUN, null)
     return stored ? normalizeRun(stored) : null
   })
   const [run, setRun] = useState<RunState | null>(null)
-  const [selectedStartModel, setSelectedStartModel] = useState(() => localStorage.getItem(STORAGE_MODEL) ?? STARTER_MODEL_IDS[0])
+  const [selectedStartModel, setSelectedStartModel] = useState(() => readStorage(STORAGE_MODEL, STARTER_MODEL_IDS[0]))
   const [overlay, setOverlay] = useState<Overlay>(null)
-  const recordedRuns = useRef(new Set<string>())
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
     document.documentElement.dataset.shell = settings.shell
     document.documentElement.classList.toggle('reduce-motion', settings.reducedMotion)
-    localStorage.setItem(STORAGE_SETTINGS, JSON.stringify(settings))
+    writeStorage(STORAGE_SETTINGS, settings)
   }, [settings])
 
   useEffect(() => {
@@ -62,20 +66,17 @@ export default function App() {
 
   useEffect(() => {
     if (!run) return
-    localStorage.setItem(STORAGE_RUN, JSON.stringify(run))
+    writeStorage(STORAGE_RUN, run)
     setSavedRun(run)
-    if (run.screen === 'summary' && !run.metaRecorded) {
-      const runKey = `${run.seed}-${run.retryUsed ? 'retry' : 'first'}`
-      if (!recordedRuns.current.has(runKey)) {
-        recordedRuns.current.add(runKey)
-        setMeta((current) => {
-          const next = updateMeta(current, run)
-          localStorage.setItem(STORAGE_META, JSON.stringify(next))
-          return next
-        })
-      }
-      setRun((current) => current ? { ...current, metaRecorded: true } : current)
-    }
+    if (run.screen !== 'summary') return
+    // 职业经验按 runKey 幂等结算，不需要再回写 run 触发额外一轮渲染。
+    const runKey = `${run.seed}-${run.retryUsed ? 'retry' : 'first'}`
+    setMeta((current) => {
+      if (current.recordedRunKeys.includes(runKey)) return current
+      const next = updateMeta(current, run, runKey)
+      writeStorage(STORAGE_META, next)
+      return next
+    })
   }, [run])
 
   useEffect(() => {
@@ -107,7 +108,7 @@ export default function App() {
 
   const returnHome = () => {
     if (run?.screen === 'summary') {
-      localStorage.removeItem(STORAGE_RUN)
+      removeStorage(STORAGE_RUN)
       setSavedRun(null)
     }
     setRun(null)
@@ -115,7 +116,7 @@ export default function App() {
 
   const chooseStartModel = (id: string) => {
     setSelectedStartModel(id)
-    localStorage.setItem(STORAGE_MODEL, id)
+    writeStorage(STORAGE_MODEL, id)
     audioDirector.play('model')
   }
 
@@ -216,7 +217,7 @@ export default function App() {
           <button className="icon-button text-icon-button" onClick={() => setOverlay('guide')}><BookOpen size={15} /><span>规则</span></button>
           <button className="icon-button text-icon-button" onClick={() => setOverlay('atlas')}><CircleDollarSign size={15} /><span>价格</span></button>
           <ThemeShellControls compact theme={settings.theme} shell={settings.shell} sound={settings.sound} reducedMotion={settings.reducedMotion} onTheme={toggleTheme} onShell={toggleShell} onSound={toggleSound} onMotion={toggleMotion} />
-          <button className="icon-button" onClick={returnHome} title="返回主界面"><Home size={16} /></button>
+          <button className="icon-button" onClick={returnHome} title="返回主界面" aria-label="返回主界面"><Home size={16} /></button>
         </div>
       </header>
 
@@ -291,11 +292,4 @@ function StatBar({ label, value }: { label: string; value: number }) {
   return <div><span>{label}</span><div className="meter"><span style={{ width: `${Math.min(100, value * 100)}%` }} /></div></div>
 }
 
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const stored = localStorage.getItem(key)
-    return stored ? JSON.parse(stored) as T : fallback
-  } catch {
-    return fallback
-  }
-}
+

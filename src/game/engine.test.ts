@@ -1,19 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import { ACTION_CARDS, MODELS } from './data'
 import {
-  assessCardSequence,
+  CACHE_DEADLINE_CONTEXT,
   DEFAULT_META,
+  META_VERSION,
+  RUN_VERSION,
+  assessCardSequence,
   beginNode,
+  buildHand,
   buildRoute,
+  cacheOutcome,
+  cacheChoicePreview,
   createRun,
   deliveryConfidence,
+  finalScore,
+  finalScoreBreakdown,
+  normalizeMeta,
+  normalizeRun,
   playAction,
   randomAt,
   resolveCache,
+  resolveEvent,
   switchModel,
   totalUsage,
   updateMeta,
 } from './engine'
+import type { RunState } from './types'
 
 describe('deterministic route generation', () => {
   it('builds the same seven-layer graph for the same seed', () => {
@@ -159,5 +171,164 @@ describe('pricing and progression data', () => {
     expect(next.unlockedModels).toContain('gemina-flash')
     expect(next.unlockedModels).toContain('qwan-max')
     expect(next.victories).toBe(1)
+  })
+})
+
+function atCache(seed: number, resources: Partial<RunState['resources']> = {}): RunState {
+  const run = createRun(seed, 'codax-luna')
+  return {
+    ...run,
+    screen: 'event',
+    currentNodeId: 'l4-a',
+    resources: { ...run.resources, context: 100_000, ...resources },
+  }
+}
+
+function atEvent(seed: number, resources: Partial<RunState['resources']> = {}): RunState {
+  const run = createRun(seed, 'codax-luna')
+  return {
+    ...run,
+    screen: 'event',
+    currentNodeId: 'l2-a',
+    resources: { ...run.resources, ...resources },
+  }
+}
+
+describe('rest node context guard', () => {
+  it('previews the deadline cost and blocks it before the window overflows', () => {
+    const safe = cacheChoicePreview(atCache(11, { context: 100_000 }))
+    expect(safe.deadline.disabled).toBe(false)
+    expect(safe.deadline.context).toBe(100_000 + CACHE_DEADLINE_CONTEXT)
+
+    const risky = cacheChoicePreview(atCache(11, { context: 219_999 }))
+    expect(risky.deadline.overflow).toBe(true)
+    expect(risky.deadline.disabled).toBe(true)
+    expect(risky.deadline.context).toBeLessThan(220_000)
+  })
+
+  it('never lets a clamped deadline choice end the run by itself', () => {
+    const risky = atCache(11, { context: 219_999 })
+    const next = resolveCache(risky, 'deadline')
+    expect(cacheOutcome(risky, 'deadline').overflow).toBe(true)
+    expect(next.screen).toBe('map')
+    expect(next.resources.context).toBeLessThan(risky.resources.contextMax)
+  })
+})
+
+describe('defeat conditions', () => {
+  it('ends the run when the budget goes negative', () => {
+    const next = resolveEvent(atEvent(77, { budget: 10 }), { budget: -500 }, '财务介入')
+    expect(next.screen).toBe('summary')
+    expect(next.lastOutcome).toBe('defeat')
+  })
+
+  it('ends the run when context reaches the window limit', () => {
+    const next = resolveEvent(atEvent(77, { context: 220_000 }), {}, '窗口溢出')
+    expect(next.lastOutcome).toBe('defeat')
+  })
+
+  it('ends the run when the deadline hits zero', () => {
+    const next = resolveCache(atEvent(77, { time: 1 }), 'compact')
+    expect(next.lastOutcome).toBe('defeat')
+  })
+
+  it('ends the run when stability hits zero', () => {
+    const next = resolveCache(atEvent(77, { stability: 3 }), 'deadline')
+    expect(next.lastOutcome).toBe('defeat')
+  })
+})
+
+describe('deterministic logging and hand', () => {
+  it('reproduces log ids without any wall-clock dependency', () => {
+    const scan = ACTION_CARDS.find((item) => item.id === 'scan-repo')!
+    const first = playAction(beginNode(createRun(1010, 'codax-luna'), 'l0-a'), scan)
+    const second = playAction(beginNode(createRun(1010, 'codax-luna'), 'l0-a'), scan)
+    const ids = first.logs.map((log) => log.id)
+
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toEqual(second.logs.map((log) => log.id))
+    expect(first.logs).toEqual(second.logs)
+    expect(first.logSeq).toBe(second.logSeq)
+  })
+
+  it('keeps the same hand inside one project node', () => {
+    const base = beginNode(createRun(1212, 'codax-luna'), 'l0-a')
+    const ids = buildHand(base).map((card) => card.id)
+    expect(ids).toHaveLength(7)
+    expect(ids.slice(0, 4)).toEqual(['scan-repo', 'precision-patch', 'unit-tests', 'compress-context'])
+
+    const after = playAction(base, ACTION_CARDS.find((item) => item.id === 'scan-repo')!)
+    expect(after.encounter?.actionCount).toBe(1)
+    expect(buildHand(after).map((card) => card.id)).toEqual(ids)
+  })
+
+  it('charges part of the investigation progress when the context is compacted', () => {
+    const base = beginNode(createRun(909, 'codax-luna'), 'l0-a')
+    expect(base.encounter).toBeTruthy()
+    const prepared = { ...base, encounter: { ...base.encounter!, analysis: 12 } }
+    const next = playAction(prepared, ACTION_CARDS.find((item) => item.id === 'compress-context')!)
+
+    expect(next.encounter!.analysis).toBeLessThan(12)
+    expect(next.resources.context).toBeLessThan(prepared.resources.context)
+    expect(next.logs.at(-1)?.body).toContain('调查进度')
+  })
+})
+
+describe('score and save migration', () => {
+  it('keeps the remaining budget from dominating the final score', () => {
+    const base = { ...createRun(515, 'codax-luna'), score: 600, completedProjects: 4, disciplineScore: 4 }
+    const rich = { ...base, resources: { ...base.resources, budget: 6800, time: 40, stability: 70 } }
+    const poor = { ...base, resources: { ...base.resources, budget: 0, time: 40, stability: 70 } }
+    const budgetImpact = finalScore(rich) - finalScore(poor)
+
+    expect(budgetImpact).toBeCloseTo(6800 * 0.28, 0)
+    expect(budgetImpact).toBeLessThan(2400)
+
+    const disciplined = { ...base, completedProjects: 5, disciplineScore: 12 }
+    expect(finalScore(disciplined) - finalScore(base)).toBe(500)
+  })
+
+  it('keeps the score breakdown consistent with the final score', () => {
+    const run = createRun(717, 'codax-luna')
+    const finished = {
+      ...run,
+      screen: 'summary' as const,
+      score: 812,
+      completedProjects: 4,
+      failedProjects: 1,
+      disciplineScore: 2,
+      resources: { ...run.resources, budget: 2400, time: 12, stability: 55 },
+    }
+    const total = finalScoreBreakdown(finished).reduce((sum, item) => sum + item.value, 0)
+    expect(total).toBe(finalScore(finished))
+  })
+
+  it('backfills fields missing from saves written by older builds', () => {
+    const legacy = { ...createRun(313, 'codax-luna') } as Partial<RunState>
+    delete legacy.logSeq
+    delete legacy.disciplineScore
+    delete legacy.version
+
+    const migrated = normalizeRun(legacy as RunState)
+    expect(migrated.version).toBe(RUN_VERSION)
+    expect(migrated.logSeq).toBe(legacy.logs?.length)
+    expect(migrated.disciplineScore).toBe(0)
+  })
+
+  it('repairs metadata and resets an incomparable best score exactly once', () => {
+    const legacy = { ...DEFAULT_META, version: 1, xp: 0, bestScore: 999_999, recordedRunKeys: undefined as unknown as string[] }
+    expect(normalizeMeta(legacy).recordedRunKeys).toEqual([])
+
+    const finished = {
+      ...createRun(414, 'codax-luna'),
+      screen: 'summary' as const,
+      completedProjects: 2,
+      lastOutcome: 'victory' as const,
+    }
+    const next = updateMeta(legacy, finished, '414-first')
+    expect(next.version).toBe(META_VERSION)
+    expect(next.bestScore).toBe(finalScore(finished))
+    expect(next.recordedRunKeys).toContain('414-first')
+    expect(updateMeta(next, finished, '414-first')).toBe(next)
   })
 })

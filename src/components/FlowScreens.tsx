@@ -1,13 +1,17 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { ArrowRight, Bot, CheckCircle2, ChevronRight, Coffee, Database, Flame, Gauge, Gift, Home, LockKeyhole, RotateCcw, Skull, Sparkles, Timer, Trophy } from 'lucide-react'
 import { BUFFS, PRICE_SNAPSHOT, getModel } from '../game/data'
-import { availableRewards, finalScore, formatCny, formatTokens, getCurrentEvent, totalUsage } from '../game/engine'
+import { CACHE_DEADLINE_CONTEXT, availableRewards, cacheChoicePreview, finalScore, finalScoreBreakdown, formatCny, formatTokens, getCurrentEvent, totalUsage } from '../game/engine'
 import type { ChoiceEffect, MetaProgress, RunState } from '../game/types'
 import { TinyTag } from './Common'
 
 export function EventScreen({ state, onEventChoice, onCacheChoice }: { state: RunState; onEventChoice: (effect: ChoiceEffect, result: string) => void; onCacheChoice: (choice: 'compact' | 'stabilize' | 'deadline') => void }) {
   const node = state.route.find((candidate) => candidate.id === state.currentNodeId)
   if (node?.type === 'cache') {
+    const preview = cacheChoicePreview(state)
+    const deadlineMeta = preview.deadline.overflow
+      ? `${formatTokens(state.resources.context)} → 超出 ${formatTokens(state.resources.contextMax)} 上限`
+      : `Deadline ${state.resources.time} 格 → ${Math.min(state.resources.timeMax, state.resources.time + 5)} 格 · 上下文 +${formatTokens(CACHE_DEADLINE_CONTEXT)}`
     return (
       <main className="interstitial-screen cache-screen">
         <div className="interstitial-symbol"><Coffee size={30} /></div>
@@ -15,9 +19,9 @@ export function EventScreen({ state, onEventChoice, onCacheChoice }: { state: Ru
         <h1>在继续烧 Token 前，喘口气</h1>
         <p className="interstitial-lede">你找到一间没有产品经理的会议室。只能完成一项维护。</p>
         <div className="choice-grid three">
-          <ChoiceCard icon={<Database size={21} />} title="压缩上下文" description="把当前上下文压缩至 30%，消耗 1 格时间。" meta={`${formatTokens(state.resources.context)} → ${formatTokens(Math.max(2000, state.resources.context * 0.3))}`} onClick={() => onCacheChoice('compact')} />
-          <ChoiceCard icon={<Gauge size={21} />} title="整理 Git 分支" description="消耗 1 格时间，恢复 18% 代码稳定度。" meta={`稳定度 ${Math.round(state.resources.stability)}%`} onClick={() => onCacheChoice('stabilize')} />
-          <ChoiceCard icon={<Timer size={21} />} title="申请延期" description="甘特图换来 5 格时间，但稳定度 -3。" meta={`Deadline ${state.resources.time} 格`} onClick={() => onCacheChoice('deadline')} />
+          <ChoiceCard icon={<Database size={21} />} title="压缩上下文" description="把当前上下文压缩至 30%，消耗 1 格时间。" meta={`${formatTokens(state.resources.context)} → ${formatTokens(preview.compact.context)}`} onClick={() => onCacheChoice('compact')} />
+          <ChoiceCard icon={<Gauge size={21} />} title="整理 Git 分支" description="消耗 1 格时间，恢复 18% 代码稳定度。" meta={`稳定度 ${Math.round(state.resources.stability)}% → ${Math.min(100, Math.round(state.resources.stability + 18))}%`} onClick={() => onCacheChoice('stabilize')} />
+          <ChoiceCard icon={<Timer size={21} />} title="申请延期" description={preview.deadline.overflow ? '上下文已经贴住窗口上限，延期会直接触发溢出。这一项不可用。' : '甘特图换来 5 格时间，但稳定度 -3。'} meta={deadlineMeta} disabled={preview.deadline.disabled} onClick={() => onCacheChoice('deadline')} />
         </div>
       </main>
     )
@@ -92,6 +96,12 @@ export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome }: { stat
 
       <div className="score-plaque"><span>FINAL SCORE</span><strong>{score.toLocaleString()}</strong><small>本局完成 {state.completedProjects} 个项目 · 失败交付 {state.failedProjects} 次</small></div>
 
+      <div className="score-breakdown">
+        {finalScoreBreakdown(state).filter((item) => item.value !== 0).map((item) => (
+          <span key={item.key}>{item.label}<b>{item.value > 0 ? `+${item.value.toLocaleString()}` : item.value.toLocaleString()}</b></span>
+        ))}
+      </div>
+
       <div className="summary-metrics">
         <div><Flame size={17} /><span>实际费用</span><strong>{formatCny(usage.cost)}</strong><small>预算余 {formatCny(state.resources.budget)}</small></div>
         <div><Database size={17} /><span>总 Token</span><strong>{formatTokens(usage.input + usage.output)}</strong><small>缓存命中 {formatTokens(usage.cached)}</small></div>
@@ -110,8 +120,8 @@ export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome }: { stat
   )
 }
 
-function ChoiceCard({ icon, title, description, meta, onClick, index }: { icon: ReactNode; title: string; description: string; meta: string; onClick: () => void; index?: number }) {
-  return <button className="choice-card" onClick={onClick}>{index && <span className="choice-index">0{index}</span>}<span className="choice-icon">{icon}</span><h2>{title}</h2><p>{description}</p><strong>{meta}</strong><span className="choice-cta">确认选择<ArrowRight size={15} /></span></button>
+function ChoiceCard({ icon, title, description, meta, onClick, index, disabled = false }: { icon: ReactNode; title: string; description: string; meta: string; onClick: () => void; index?: number; disabled?: boolean }) {
+  return <button className={`choice-card${disabled ? ' is-disabled' : ''}`} disabled={disabled} onClick={onClick}>{index && <span className="choice-index">0{index}</span>}<span className="choice-icon">{icon}</span><h2>{title}</h2><p>{description}</p><strong>{meta}</strong><span className="choice-cta">{disabled ? '当前不可用' : '确认选择'}<ArrowRight size={15} /></span></button>
 }
 
 function effectSummary(effect: ChoiceEffect): string {
