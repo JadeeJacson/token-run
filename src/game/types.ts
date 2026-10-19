@@ -1,10 +1,11 @@
 export type Theme = 'dark' | 'light'
 export type ShellStyle = 'codax' | 'cloude'
-export type Screen = 'home' | 'map' | 'encounter' | 'event' | 'reward' | 'summary'
+export type Screen = 'home' | 'map' | 'encounter' | 'event' | 'reward' | 'summary' | 'review'
 export type NodeType = 'project' | 'event' | 'cache' | 'boss'
 export type CardKind = 'inspect' | 'build' | 'verify' | 'control'
 export type RiskLevel = '低' | '中' | '高'
 export type WorkflowStage = '调查' | '计划' | '实现' | '验证' | '控制'
+export type ArchetypeId = 'frugal' | 'evidence' | 'rewrite' | 'compress'
 
 export interface PriceRate {
   input: number
@@ -112,6 +113,10 @@ export interface EncounterState {
   actionCount: number
   workflowDebt: number
   sequenceStreak: number
+  /** 本项目开始时的 usage 下标，用于精确审计本节点 Token。 */
+  usageStart: number
+  /** 本项目开始时的流程纪律累计，用于计算节点级 disciplineDelta。 */
+  disciplineStart: number
   cooldowns: Record<string, number>
   codeMode: 'source' | 'diff' | 'terminal'
 }
@@ -163,6 +168,10 @@ export interface RunState {
   rngCursor: number
   retryUsed: boolean
   screen: Screen
+  /** 开局选择的工作方式；旧档缺省为 frugal。 */
+  archetypeId: ArchetypeId
+  /** 一局审计时间线，供复盘页展示。 */
+  audits: ProjectAudit[]
   route: RouteNode[]
   currentNodeId: string | null
   completedNodes: string[]
@@ -184,6 +193,40 @@ export interface RunState {
   pendingReward: number
   lastOutcome?: 'victory' | 'defeat'
   lastMessage?: string
+}
+
+export interface ProjectAudit {
+  nodeId: string
+  projectId: string
+  title: string
+  outcome: 'delivered' | 'failed' | 'skipped'
+  actions: number
+  input: number
+  cached: number
+  output: number
+  cost: number
+  disciplineDelta: number
+  topMistake?: string
+}
+
+export interface ArchetypePassives {
+  costMultiplier?: number
+  sequenceBonus?: number
+  progressMultiplier?: Partial<Record<'analysis' | 'code' | 'test' | 'review', number>>
+  contextMultiplier?: number
+  rewriteStabilityMultiplier?: number
+  compressKeepBonus?: number
+}
+
+export interface ArchetypeSpec {
+  id: ArchetypeId
+  name: string
+  tagline: string
+  description: string
+  icon: string
+  startBuffId?: string
+  cardWeights: Record<string, number>
+  passives: ArchetypePassives
 }
 
 export interface MetaProgress {

@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react'
-import { BookOpen, Bot, CircleDollarSign, Flame, Gauge, Home, Info, Layers3, Map, Sparkles } from 'lucide-react'
+import { BookOpen, Bot, CircleDollarSign, Flame, Gauge, Home, Info, Layers3, Map, Sparkles, Waypoints } from 'lucide-react'
 import { BrandMark, ResourceBar, ThemeShellControls, TinyTag } from './components/Common'
 import { EncounterScreen } from './components/EncounterScreen'
-import { EventScreen, RewardScreen, SummaryScreen } from './components/FlowScreens'
+import { EventScreen, ReviewScreen, RewardScreen, SummaryScreen } from './components/FlowScreens'
 import { HomeScreen } from './components/HomeScreen'
 import { GuideOverlay, PriceAtlas } from './components/Overlays'
 import { RouteMap } from './components/RouteMap'
 import { PRICE_SNAPSHOT, STARTER_MODEL_IDS, getModel } from './game/data'
 import { audioDirector } from './game/audio'
 import {
+  DEFAULT_ARCHETYPE_ID,
   DEFAULT_META,
   attemptDelivery,
   beginNode,
   chooseReward,
   createRun,
+  getArchetype,
+  normalizeArchetype,
   normalizeMeta,
   normalizeRun,
   playAction,
@@ -32,7 +35,7 @@ import {
   removeStorage,
   writeStorage,
 } from './game/storage'
-import type { ActionCard, ChoiceEffect, MetaProgress, RunState, Settings } from './game/types'
+import type { ActionCard, ArchetypeId, ChoiceEffect, MetaProgress, RunState, Settings } from './game/types'
 
 const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
@@ -51,6 +54,7 @@ export default function App() {
   })
   const [run, setRun] = useState<RunState | null>(null)
   const [selectedStartModel, setSelectedStartModel] = useState(() => readStorage(STORAGE_MODEL, STARTER_MODEL_IDS[0]))
+  const [selectedArchetype, setSelectedArchetype] = useState<ArchetypeId>(() => normalizeArchetype(readStorage('token-burner.archetype.v1', DEFAULT_ARCHETYPE_ID)))
   const [overlay, setOverlay] = useState<Overlay>(null)
 
   useEffect(() => {
@@ -88,7 +92,7 @@ export default function App() {
   const startNewRun = () => {
     const seed = Math.floor(Date.now() % 2_147_483_647)
     const next = {
-      ...createRun(seed, selectedStartModel),
+      ...createRun(seed, selectedStartModel, false, selectedArchetype),
       availableModelIds: [...new Set([...STARTER_MODEL_IDS, ...meta.unlockedModels, selectedStartModel])],
     }
     setRun(next)
@@ -99,7 +103,7 @@ export default function App() {
   const retryRun = () => {
     if (!run || run.retryUsed) return
     const next = {
-      ...createRun(run.seed, run.selectedModelId, true),
+      ...createRun(run.seed, run.selectedModelId, true, run.archetypeId ?? selectedArchetype),
       availableModelIds: [...new Set([...STARTER_MODEL_IDS, ...meta.unlockedModels, run.selectedModelId])],
     }
     setRun(next)
@@ -107,7 +111,7 @@ export default function App() {
   }
 
   const returnHome = () => {
-    if (run?.screen === 'summary') {
+    if (run?.screen === 'summary' || run?.screen === 'review') {
       removeStorage(STORAGE_RUN)
       setSavedRun(null)
     }
@@ -117,6 +121,12 @@ export default function App() {
   const chooseStartModel = (id: string) => {
     setSelectedStartModel(id)
     writeStorage(STORAGE_MODEL, id)
+    audioDirector.play('model')
+  }
+
+  const chooseArchetype = (id: ArchetypeId) => {
+    setSelectedArchetype(id)
+    writeStorage('token-burner.archetype.v1', id)
     audioDirector.play('model')
   }
 
@@ -186,8 +196,10 @@ export default function App() {
           meta={meta}
           settings={settings}
           selectedModel={selectedStartModel}
+          selectedArchetype={selectedArchetype}
           savedRun={savedRun}
           onSelectModel={chooseStartModel}
+          onSelectArchetype={chooseArchetype}
           onStart={startNewRun}
           onContinue={() => savedRun && setRun(savedRun)}
           onOpenAtlas={() => setOverlay('atlas')}
@@ -211,6 +223,7 @@ export default function App() {
           <span className="topbar-divider" />
           <span className="workspace-name">token-run / <b>{settings.shell === 'codax' ? 'agent-workspace' : 'claude-terminal'}</b></span>
           <TinyTag tone="neutral">seed {run.seed}</TinyTag>
+          <TinyTag tone="violet">{getArchetype(run.archetypeId).name}</TinyTag>
         </div>
         <ResourceBar resources={run.resources} />
         <div className="topbar-actions">
@@ -243,7 +256,28 @@ export default function App() {
           />
         )}
         {run.screen === 'reward' && <RewardScreen state={run} onChoose={takeReward} />}
-        {run.screen === 'summary' && <SummaryScreen state={run} meta={meta} onRetry={retryRun} onNewRun={startNewRun} onHome={returnHome} />}
+        {run.screen === 'summary' && (
+          <SummaryScreen
+            state={run}
+            meta={meta}
+            onRetry={retryRun}
+            onNewRun={startNewRun}
+            onHome={returnHome}
+            onReview={() => {
+              setRun({ ...run, screen: 'review' })
+              audioDirector.play('ui')
+            }}
+          />
+        )}
+        {run.screen === 'review' && (
+          <ReviewScreen
+            state={run}
+            onBack={() => {
+              setRun({ ...run, screen: 'summary' })
+              audioDirector.play('ui')
+            }}
+          />
+        )}
       </div>
       {overlay === 'atlas' && <PriceAtlas onClose={() => setOverlay(null)} />}
       {overlay === 'guide' && <GuideOverlay onClose={() => setOverlay(null)} />}
@@ -263,6 +297,11 @@ function MapWorkspace({ state, onSelect, onSwitchModel }: { state: RunState; onS
           <div className="side-model-title"><span key={model.id} className="model-swap" style={{ background: model.color }}><Bot size={18} /></span><div><h3>{model.parodyName}</h3><p>{model.provider} · {model.realName}</p><small className="model-trait">{model.trait}</small></div></div>
           <div className="side-model-bars"><StatBar label="能力" value={model.power / 1.45} /><StatBar label="可靠" value={model.reliability} /><StatBar label="流程" value={model.workflowDiscipline / 1.1} /><StatBar label="省上下文" value={Math.min(1, Math.max(0, (1.3 - model.contextEfficiency) / 0.8))} /></div>
           <label className="model-select-label">切换已接入模型<select value={state.selectedModelId} onChange={(event) => onSwitchModel(event.target.value)}>{state.availableModelIds.map((id) => <option key={id} value={id}>{getModel(id).parodyName}</option>)}</select></label>
+        </section>
+
+        <section className="run-side-card">
+          <div className="side-card-heading"><span><Waypoints size={14} />工作方式</span><strong>{getArchetype(state.archetypeId).name}</strong></div>
+          <p className="archetype-side-note">{getArchetype(state.archetypeId).tagline}</p>
         </section>
 
         <section className="run-side-card">

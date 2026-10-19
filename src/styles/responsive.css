@@ -1,0 +1,22 @@
+@media (max-width: 1280px) {
+  .game-topbar { grid-template-columns: 270px 1fr 250px; }
+  .topbar-actions .text-icon-button span { display: none; }
+  .ide-workspace { grid-template-columns: 170px minmax(430px, 1fr) 390px; }
+  .agent-pane { grid-template-rows: 51px minmax(130px,.55fr) minmax(390px,1.45fr); }
+  .task-drawer { grid-template-columns: 1fr 185px; }
+  .home-screen { padding-inline: 30px; }
+  .home-hero { gap: 35px; }
+}
+
+@media (max-width: 1360px) {
+  .home-nav-right .shell-controls .text-icon-button span { display: none; }
+}
+
+@media (max-width: 1080px) {
+  .home-hero { grid-template-columns: 1fr; padding-top: 45px; }.burn-console { justify-self: center; max-width: 650px; transform: none; }.launcher-grid { grid-template-columns: 1fr; }
+  .game-root { min-width: 1024px; }.game-topbar { grid-template-columns: 250px 1fr 210px; }.workspace-name, .topbar-left .tiny-tag { display: none; }.ide-workspace { grid-template-columns: 150px 1fr 370px; }.map-workspace { grid-template-columns: 1fr 280px; }.route-stage { padding-inline: 20px; }
+}
+
+@media (max-width: 720px) {
+  .home-screen { padding-inline: 18px; }.home-nav { height: 68px; }.home-nav .brand-copy small, .home-nav-right .nav-text-button, .home-nav-right .text-icon-button span { display: none; }.home-nav-right { gap: 6px; }.home-hero { min-height: auto; padding: 38px 0; }.hero-copy h1 span { font-size: 37px; }.hero-copy h1 strong { font-size: 49px; }.hero-lede { font-size: 13px; }.hero-actions { flex-direction: column; align-items: stretch; }.hero-proof { display: grid; grid-template-columns: 1fr; }.burn-visual { height: 175px; }.launcher-grid { grid-template-columns: minmax(0,1fr); }.career-stats { grid-template-columns: repeat(3,1fr); }.home-footer { grid-template-columns: 1fr; }.home-footer small { grid-column: 1; }.modal-backdrop { padding: 10px; }.modal { max-height: calc(100vh - 20px); }.guide-steps, .resource-guide { grid-template-columns: 1fr; }.choice-grid, .choice-grid.three, .reward-grid, .summary-metrics { grid-template-columns: 1fr; }.interstitial-screen, .summary-screen { justify-content: flex-start; padding: 35px 18px; }.summary-actions { flex-direction: column; width: 100%; }
+}

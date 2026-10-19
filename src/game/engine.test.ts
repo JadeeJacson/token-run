@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACTION_CARDS, MODELS } from './data'
+import { ACTION_CARDS, BUFFS, EVENTS, MODELS, PROJECTS } from './data'
 import {
   CACHE_DEADLINE_CONTEXT,
   DEFAULT_META,
@@ -271,6 +271,64 @@ describe('deterministic logging and hand', () => {
     expect(next.encounter!.analysis).toBeLessThan(12)
     expect(next.resources.context).toBeLessThan(prepared.resources.context)
     expect(next.logs.at(-1)?.body).toContain('调查进度')
+  })
+})
+
+describe('archetypes and content 2.0', () => {
+  it('creates a run with archetype and start buff, and migrates legacy saves', () => {
+    const run = createRun(2026, 'codax-luna', false, 'evidence')
+    expect(run.archetypeId).toBe('evidence')
+    expect(run.audits).toEqual([])
+    expect(run.buffs.some((buff) => buff.id === 'prompt-linter')).toBe(true)
+
+    const legacy = { ...createRun(1, 'codax-luna') } as Partial<RunState>
+    delete (legacy as Record<string, unknown>).archetypeId
+    delete (legacy as Record<string, unknown>).audits
+    const migrated = normalizeRun(legacy as RunState)
+    expect(migrated.archetypeId).toBe('frugal')
+    expect(migrated.audits).toEqual([])
+  })
+
+  it('lets different archetypes change hand weights and costs', () => {
+    const card = ACTION_CARDS.find((item) => item.id === 'scan-repo')!
+    // 清掉流派起手 Buff，只比较被动 costMultiplier。
+    const frugal = { ...beginNode(createRun(4242, 'deep-flash', false, 'frugal'), 'l0-a'), buffs: [] }
+    const rewrite = { ...beginNode(createRun(4242, 'deep-flash', false, 'rewrite'), 'l0-a'), buffs: [] }
+    const frugalCost = totalUsage(playAction(frugal, card)).cost
+    const rewriteCost = totalUsage(playAction(rewrite, card)).cost
+    expect(frugalCost).toBeLessThan(rewriteCost)
+
+    let evidenceHits = 0
+    let rewriteHits = 0
+    const evidenceFav = new Set(['scan-repo', 'read-logs', 'write-rfc', 'unit-tests', 'full-suite'])
+    const rewriteFav = new Set(['rewrite-module', 'refactor-extract', 'manual-hotfix', 'precision-patch'])
+    for (let seed = 1; seed <= 24; seed += 1) {
+      const evidenceExtras = buildHand(beginNode(createRun(seed, 'codax-luna', false, 'evidence'), 'l0-a')).slice(4)
+      const rewriteExtras = buildHand(beginNode(createRun(seed, 'codax-luna', false, 'rewrite'), 'l0-a')).slice(4)
+      evidenceHits += evidenceExtras.filter((item) => evidenceFav.has(item.id)).length
+      rewriteHits += rewriteExtras.filter((item) => rewriteFav.has(item.id)).length
+    }
+    expect(evidenceHits).toBeGreaterThan(rewriteHits)
+  })
+
+  it('applies compress start buff context window and tracks encounter usage origin', () => {
+    const compress = createRun(99, 'codax-luna', false, 'compress')
+    expect(compress.resources.contextMax).toBe(265000)
+    expect(compress.buffs.some((buff) => buff.id === 'elastic-context')).toBe(true)
+
+    const prepared = beginNode(createRun(55, 'codax-luna', false, 'frugal'), 'l0-a')
+    const scanned = playAction(prepared, ACTION_CARDS.find((item) => item.id === 'scan-repo')!)
+    const frozen = playAction(scanned, ACTION_CARDS.find((item) => item.id === 'freeze-feature')!)
+    expect(frozen.usage.length).toBe(1)
+    expect(frozen.encounter?.usageStart).toBe(0)
+  })
+
+  it('expands content pools for 2.0', () => {
+    expect(PROJECTS.filter((project) => project.id !== 'friday-deploy')).toHaveLength(19)
+    expect(ACTION_CARDS).toHaveLength(18)
+    expect(EVENTS).toHaveLength(10)
+    expect(MODELS).toHaveLength(12)
+    expect(BUFFS).toHaveLength(10)
   })
 })
 
