@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { ArrowRight, Bot, CheckCircle2, ChevronRight, Coffee, Database, Flame, Gauge, Gift, Home, LockKeyhole, RotateCcw, Skull, Sparkles, Timer, Trophy } from 'lucide-react'
+import { ArrowRight, Bot, CheckCircle2, ChevronLeft, ChevronRight, Coffee, Database, Flame, Gauge, Gift, Home, LockKeyhole, RotateCcw, Search, Skull, Sparkles, Timer, Trophy } from 'lucide-react'
 import { BUFFS, PRICE_SNAPSHOT, getModel } from '../game/data'
-import { CACHE_DEADLINE_CONTEXT, availableRewards, cacheChoicePreview, finalScore, finalScoreBreakdown, formatCny, formatTokens, getCurrentEvent, totalUsage } from '../game/engine'
+import { ARCHETYPES, CACHE_DEADLINE_CONTEXT, availableRewards, cacheChoicePreview, finalScore, finalScoreBreakdown, formatCny, formatTokens, getArchetype, getCurrentEvent, totalUsage } from '../game/engine'
 import type { ChoiceEffect, MetaProgress, RunState } from '../game/types'
 import { TinyTag } from './Common'
 
@@ -82,23 +82,24 @@ export function RewardScreen({ state, onChoose }: { state: RunState; onChoose: (
   )
 }
 
-export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome }: { state: RunState; meta: MetaProgress; onRetry: () => void; onNewRun: () => void; onHome: () => void }) {
+export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome, onReview }: { state: RunState; meta: MetaProgress; onRetry: () => void; onNewRun: () => void; onHome: () => void; onReview: () => void }) {
   const usage = totalUsage(state)
   const victory = state.lastOutcome === 'victory'
   const score = finalScore(state)
+  const archetype = getArchetype(state.archetypeId)
   return (
     <main className={`summary-screen ${victory ? 'victory' : 'defeat'}`}>
       <div className="summary-glow" />
       <div className="summary-icon">{victory ? <Trophy size={34} /> : <Skull size={34} />}</div>
-      <span className="eyebrow">{victory ? 'RUN COMPLETE / 成功交付' : 'RUN TERMINATED / 项目终止'}</span>
+      <span className="eyebrow">{victory ? 'RUN COMPLETE / 成功交付' : 'RUN TERMINATED / 项目终止'} · {archetype.name}</span>
       <h1>{victory ? '周末保住了。大概。' : 'Token 烧完了，项目还在。'}</h1>
       <p>{state.lastMessage}</p>
 
       <div className="score-plaque"><span>FINAL SCORE</span><strong>{score.toLocaleString()}</strong><small>本局完成 {state.completedProjects} 个项目 · 失败交付 {state.failedProjects} 次</small></div>
 
-      <div className="score-breakdown">
-        {finalScoreBreakdown(state).filter((item) => item.value !== 0).map((item) => (
-          <span key={item.key}>{item.label}<b>{item.value > 0 ? `+${item.value.toLocaleString()}` : item.value.toLocaleString()}</b></span>
+      <div className="score-breakdown score-breakdown-animated">
+        {finalScoreBreakdown(state).filter((item) => item.value !== 0).map((item, index) => (
+          <span key={item.key} style={{ '--seg-delay': `${index * 90}ms` } as CSSProperties}>{item.label}<b>{item.value > 0 ? `+${item.value.toLocaleString()}` : item.value.toLocaleString()}</b></span>
         ))}
       </div>
 
@@ -110,6 +111,7 @@ export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome }: { stat
       </div>
 
       <div className="summary-actions">
+        <button className="secondary-button big" onClick={onReview}><Search size={16} />查看复盘</button>
         {!victory && !state.retryUsed && <button className="primary-button big" onClick={onRetry}><RotateCcw size={17} />沿原路线重试一次</button>}
         <button className={victory || state.retryUsed ? 'primary-button big' : 'secondary-button big'} onClick={onNewRun}><Sparkles size={17} />生成新路线</button>
         <button className="ghost-button big" onClick={onHome}><Home size={17} />返回主界面</button>
@@ -118,6 +120,98 @@ export function SummaryScreen({ state, meta, onRetry, onNewRun, onHome }: { stat
       <small className="snapshot-note">计价快照：{PRICE_SNAPSHOT} · 本局为离线模拟，没有产生真实 API 费用。</small>
     </main>
   )
+}
+
+export function ReviewScreen({ state, onBack }: { state: RunState; onBack: () => void }) {
+  const usage = totalUsage(state)
+  const score = finalScore(state)
+  const archetype = getArchetype(state.archetypeId)
+  const clean = Math.max(0, state.disciplineScore)
+  const debt = Math.max(0, -state.disciplineScore)
+  const mistakes = state.audits
+    .map((audit) => audit.topMistake)
+    .filter((item): item is string => Boolean(item))
+  const mistakeCounts = mistakes.reduce<Record<string, number>>((acc, item) => {
+    acc[item] = (acc[item] ?? 0) + 1
+    return acc
+  }, {})
+  const topMistakes = Object.entries(mistakeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3)
+
+  return (
+    <main className="summary-screen review-screen">
+      <div className="summary-icon"><Search size={32} /></div>
+      <span className="eyebrow">RUN REVIEW / 一局复盘</span>
+      <h1>这局真正发生了什么</h1>
+      <p>{state.lastMessage ?? '审计时间线已生成。'}</p>
+
+      <div className="score-plaque"><span>SEED {state.seed} · {archetype.name}</span><strong>{score.toLocaleString()}</strong><small>纪律 +{clean} / 债务 {debt} · 费用 {formatCny(usage.cost)}</small></div>
+
+      <div className="review-grid">
+        <section className="review-card">
+          <h3>分数五段</h3>
+          {finalScoreBreakdown(state).map((item) => (
+            <div className="review-row" key={item.key}><span>{item.label}</span><b>{item.value > 0 ? `+${item.value}` : item.value}</b></div>
+          ))}
+        </section>
+        <section className="review-card">
+          <h3>纪律与风险</h3>
+          <div className="review-row"><span>按序连击贡献</span><b>+{clean}</b></div>
+          <div className="review-row"><span>错序债务</span><b>{debt}</b></div>
+          <div className="review-row"><span>项目审计</span><b>{state.audits.length}</b></div>
+          <div className="review-mistakes">
+            {topMistakes.length === 0 ? <p>本局没有突出风险标签。</p> : topMistakes.map(([label, count]) => (
+              <span key={label}>{label} ×{count}</span>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="review-timeline">
+        <h3>项目时间线与费用</h3>
+        {state.audits.length === 0 ? <p className="review-empty">还没有完成项目审计。</p> : (
+          <>
+            <div className="review-bars">
+              {state.audits.map((audit, index) => {
+                const maxCost = Math.max(...state.audits.map((item) => item.cost), 0.001)
+                const width = Math.min(100, (audit.cost / maxCost) * 100)
+                return (
+                  <div className="review-bar-row" key={`bar-${audit.nodeId}-${index}`}>
+                    <span>{audit.title}</span>
+                    <div className="review-bar"><i style={{ width: `${width}%` }} /></div>
+                    <b>{formatCny(audit.cost)} · {formatTokens(audit.input + audit.output)}</b>
+                  </div>
+                )
+              })}
+            </div>
+            {state.audits.map((audit, index) => (
+              <article key={`${audit.nodeId}-${index}`} className={`timeline-item ${audit.outcome}`}>
+                <div className="timeline-head">
+                  <strong>0{index + 1} {audit.title}</strong>
+                  <TinyTag tone={audit.outcome === 'delivered' ? 'live' : 'neutral'}>{audit.outcome === 'delivered' ? '已交付' : '被打回'}</TinyTag>
+                </div>
+                <div className="timeline-meta">
+                  <span>操作 {audit.actions}</span>
+                  <span>费用 {formatCny(audit.cost)}</span>
+                  <span>Token {formatTokens(audit.input + audit.output)}</span>
+                  <span>纪律 {audit.disciplineDelta >= 0 ? `+${audit.disciplineDelta}` : audit.disciplineDelta}</span>
+                  {audit.topMistake && <span className="mistake">{audit.topMistake}</span>}
+                </div>
+              </article>
+            ))}
+          </>
+        )}
+      </section>
+
+      <div className="summary-actions">
+        <button className="primary-button big" onClick={onBack}><ChevronLeft size={16} />返回结算</button>
+      </div>
+    </main>
+  )
+}
+
+export function ArchetypeBadge({ id }: { id: RunState['archetypeId'] }) {
+  const archetype = getArchetype(id)
+  return <TinyTag tone="violet">{ARCHETYPES.find((item) => item.id === id)?.name ?? archetype.name}</TinyTag>
 }
 
 function ChoiceCard({ icon, title, description, meta, onClick, index, disabled = false }: { icon: ReactNode; title: string; description: string; meta: string; onClick: () => void; index?: number; disabled?: boolean }) {
