@@ -3,7 +3,7 @@ feature: complete-playable-2
 status: delivered
 updated: 2026-10-19
 branch: feat/complete-playable-2
-commits: c28cac6.. # fill after commit
+commits: c28cac6..daf5c0e
 ---
 
 # Token燃烧模拟器 完整可玩版 2.0
